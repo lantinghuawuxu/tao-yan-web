@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { ContactShadows, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
+import Studio from './pages/Studio'
 import './App.css'
 
 const navItems = [
@@ -221,7 +222,7 @@ function StoneStage() {
   )
 }
 
-function App() {
+function Home() {
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -273,7 +274,7 @@ function App() {
               ))}
             </nav>
 
-            <a className="header-cta" href="#journey">
+            <a className="header-cta" href="#studio">
               开始体验
             </a>
 
@@ -298,7 +299,7 @@ function App() {
                 {item.label}
               </a>
             ))}
-            <a href="#journey" onClick={() => setMenuOpen(false)}>
+            <a href="#studio" onClick={() => setMenuOpen(false)}>
               开始体验
             </a>
           </nav>
@@ -341,7 +342,7 @@ function App() {
               </div>
 
               <div className="hero-actions">
-                <a className="btn btn-primary" href="#journey">
+                <a className="btn btn-primary" href="#studio">
                   开始虚拟雕刻
                 </a>
                 <a className="btn btn-ghost" href="#culture">
@@ -563,7 +564,7 @@ function App() {
               <h2>不必人人成为匠人，<br />但人人皆可保护。</h2>
               <p>从你的第一方数字洮砚开始。</p>
             </div>
-            <a className="btn btn-light" href="#journey" data-reveal>
+            <a className="btn btn-light" href="#studio" data-reveal>
               开始体验
             </a>
           </div>
@@ -613,6 +614,26 @@ function App() {
       </footer>
     </>
   )
+}
+
+function App() {
+  const [hash, setHash] = useState(() => window.location.hash)
+
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash)
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  useEffect(() => {
+    if (hash === '#top') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }, [hash])
+
+  if (hash === '#studio') return <Studio />
+
+  return <Home />
 }
 
 export default App
