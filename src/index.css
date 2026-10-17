@@ -1,0 +1,119 @@
+:root {
+  --ink: #142a25;
+  --ink-2: #1d3a32;
+  --ink-3: #0d1d19;
+  --paper: #f5f1e6;
+  --paper-2: #ece6d8;
+  --paper-3: #e3dccb;
+  --jade: #4f7d6d;
+  --jade-light: #9fbfae;
+  --cinnabar: #a8402f;
+  --cinnabar-dark: #8c3325;
+  --gold: #c7a86b;
+  --gold-light: #dfc796;
+  --text: #2b302c;
+  --muted: #6d746e;
+  --line: rgba(43, 48, 44, 0.12);
+  --font-serif: 'Songti SC', 'STSong', 'SimSun', 'Noto Serif SC', serif;
+  --font-kai: 'KaiTi', 'STKaiti', 'Kaiti SC', serif;
+  --font-sans: 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', system-ui,
+    sans-serif;
+  font: 16px/1.6 var(--font-sans);
+  color: var(--text);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--paper);
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.38;
+  background-image: radial-gradient(rgba(67, 58, 38, 0.16) 0.6px, transparent 0.6px);
+  background-size: 4px 4px;
+  mix-blend-mode: multiply;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  color: var(--paper);
+  background: var(--cinnabar);
+}
+
+section[id] {
+  scroll-margin-top: 84px;
+}
+
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-reveal].is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
