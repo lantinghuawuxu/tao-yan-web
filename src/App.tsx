@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { ContactShadows, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
+import Gallery from './pages/Gallery'
 import Studio from './pages/Studio'
 import './App.css'
 
@@ -9,6 +10,7 @@ const navItems = [
   { label: '项目缘起', href: '#culture' },
   { label: '行业痛点', href: '#pain' },
   { label: '石料图谱', href: '#stones' },
+  { label: '砚式图谱', href: '#inkstones' },
   { label: '数字旅程', href: '#journey' },
   { label: '3D 展厅', href: '#showcase' },
 ]
@@ -473,6 +475,15 @@ function Home() {
                 </figure>
               ))}
             </div>
+
+            <div className="stones-cta" data-reveal>
+              <p>
+                除了原石，我们还整理了一组洮砚器型与纹样，供观察、建模与文化参考。
+              </p>
+              <a className="btn btn-ghost" href="#inkstones">
+                查看砚式图谱
+              </a>
+            </div>
           </div>
         </section>
 
@@ -632,6 +643,7 @@ function App() {
   }, [hash])
 
   if (hash === '#studio') return <Studio />
+  if (hash === '#inkstones') return <Gallery />
 
   return <Home />
 }

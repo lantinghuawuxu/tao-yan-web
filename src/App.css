@@ -734,6 +734,27 @@
   color: rgba(245, 241, 230, 0.55);
 }
 
+.stones-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(199, 168, 107, 0.18);
+}
+
+.stones-cta p {
+  max-width: 620px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: rgba(245, 241, 230, 0.55);
+}
+
+.stones-cta .btn {
+  flex: none;
+}
+
 .journey {
   background: var(--paper);
 }
@@ -1293,6 +1314,15 @@
   .stone-card:first-child {
     grid-column: auto;
     grid-row: auto;
+  }
+
+  .stones-cta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .stones-cta .btn {
+    width: 100%;
   }
 
   .timeline {
