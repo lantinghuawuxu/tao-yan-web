@@ -40,27 +40,27 @@ const painPoints = [
 
 const stones = [
   {
-    image: '/images/stone-snow.jpg',
+    image: 'images/stone-snow.jpg',
     name: '鹦哥绿 · 水泉湾',
     note: '细密水纹，温润如脂',
   },
   {
-    image: '/images/stone-yellow.jpg',
+    image: 'images/stone-yellow.jpg',
     name: '黄膘 · 喇嘛崖',
     note: '金黄石膘，洮砚标志',
   },
   {
-    image: '/images/stone-color.jpg',
+    image: 'images/stone-color.jpg',
     name: '五彩云纹膘',
     note: '五彩交织，纹理如云',
   },
   {
-    image: '/images/stone-green.jpg',
+    image: 'images/stone-green.jpg',
     name: '细水纹 · 老坑',
     note: '天然纹理，一石一面',
   },
   {
-    image: '/images/stone-purple.jpg',
+    image: 'images/stone-purple.jpg',
     name: '紫石 · 喇嘛崖',
     note: '上紫下绿，石质珍罕',
   },
@@ -149,7 +149,7 @@ function StoneModel() {
         for (const texture of [map, normalMap, roughnessMap]) {
           texture.wrapS = THREE.RepeatWrapping
           texture.wrapT = THREE.RepeatWrapping
-          texture.repeat.set(3, 3)
+          texture.repeat.set(4, 4)
           texture.anisotropy = 8
         }
         setTextures({ map, normalMap, roughnessMap })
@@ -161,7 +161,7 @@ function StoneModel() {
     }
   }, [])
 
-  const normalScale = useMemo(() => new THREE.Vector2(1.2, 1.2), [])
+  const normalScale = useMemo(() => new THREE.Vector2(1.6, 1.6), [])
 
   const geometry = useMemo(() => {
     const geo = new THREE.SphereGeometry(1.45, 128, 96)
@@ -202,8 +202,8 @@ function StoneModel() {
           normalMap={textures.normalMap}
           roughnessMap={textures.roughnessMap}
           normalScale={normalScale}
-          color="#6f8b7a"
-          roughness={0.92}
+          color="#5d7a69"
+          roughness={0.95}
           metalness={0.02}
           clearcoat={0}
         />
@@ -529,10 +529,10 @@ function Home() {
 
             <div className="stones-cta" data-reveal>
               <p>
-                除了原石，我们还整理了一组洮砚器型与纹样，供观察、建模与文化参考。
+                除了原石，我们还用参数化 3D 还原了随形、长方、椭圆、圆形、双池五种砚式，可切换莲纹、云纹、水波、回纹。
               </p>
               <a className="btn btn-ghost" href="#inkstones">
-                查看砚式图谱
+                查看 3D 砚式图谱
               </a>
             </div>
           </div>
