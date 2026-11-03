@@ -797,6 +797,28 @@
   min-width: 0;
 }
 
+.carve-mode-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 4px;
+  background: #fffdf7;
+  border: 1px solid var(--line);
+}
+
+.carve-mode-switch button {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+}
+
+.carve-mode-switch button.active {
+  color: var(--paper);
+  background: var(--ink);
+}
+
 .carve-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -890,6 +912,24 @@
   background: #07110e;
   border: 1px solid rgba(199, 168, 107, 0.35);
   touch-action: none;
+}
+
+.carve-stage.is-hidden {
+  display: none;
+}
+
+.carve-3d-stage {
+  position: relative;
+  height: 560px;
+  margin-top: 14px;
+  overflow: hidden;
+  background: #07110e;
+  border: 1px solid rgba(199, 168, 107, 0.35);
+  touch-action: none;
+}
+
+.carve-3d-stage canvas {
+  display: block;
 }
 
 .carve-stage::after {
@@ -1154,6 +1194,10 @@
     gap: 28px;
   }
 
+  .carve-3d-stage {
+    height: 440px;
+  }
+
   .carve-layout {
     grid-template-columns: 1fr;
   }
@@ -1234,6 +1278,10 @@
     font-size: 9px;
   }
 
+  .carve-3d-stage {
+    height: 380px;
+  }
+
   .result-actions .btn {
     flex: 1;
   }
@@ -1242,6 +1290,10 @@
 @media (max-width: 560px) {
   .studio-header .brand-sub {
     display: none;
+  }
+
+  .carve-3d-stage {
+    height: 320px;
   }
 
   .studio-steps {

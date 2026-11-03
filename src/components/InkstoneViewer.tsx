@@ -1,16 +1,18 @@
 import { useEffect, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { ContactShadows, OrbitControls, RoundedBox } from '@react-three/drei'
+import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg'
 import * as THREE from 'three'
 
 export type InkstoneShape = '随形' | '长方' | '椭圆' | '圆形' | '双池'
 export type InkstonePattern = 'lotus' | 'cloud' | 'wave' | 'meander'
 
 const THICKNESS = 0.24
-const PATTERN_CANVAS_SIZE = 1024
-const PATTERN_WORLD_WIDTH = 3
-const PATTERN_WORLD_HEIGHT = 2.4
 const POOL_FLOOR = -THICKNESS + 0.035
+const BODY_TOP = 0.025
+const GROOVE_WIDTH = 0.022
+const GROOVE_HEIGHT = 0.034
+const evaluator = new Evaluator()
 
 function roundedRect(
   width: number,
@@ -112,219 +114,242 @@ function reverseShape(shape: THREE.Shape) {
   return new THREE.Shape(shape.getPoints(64).reverse())
 }
 
-function traceShape(
-  ctx: CanvasRenderingContext2D,
-  shape: THREE.Shape,
-  scale = 1,
-) {
-  const points = shape.getPoints(80)
-  ctx.beginPath()
-  points.forEach((point, index) => {
-    const x = point.x * scale
-    const y = point.y * scale
-    if (index === 0) ctx.moveTo(x, y)
-    else ctx.lineTo(x, y)
-  })
-  ctx.closePath()
-}
+function patternPolylines(shape: InkstoneShape, pattern: InkstonePattern) {
+  const { outer } = createShape(shape)
+  const lines: THREE.Vector2[][] = []
 
-function drawPattern(
-  ctx: CanvasRenderingContext2D,
-  pattern: InkstonePattern,
-) {
+  for (const scale of [0.86, 0.79]) {
+    const ring = outer.getPoints(48).map((point) => point.clone().multiplyScalar(scale))
+    ring.push(ring[0].clone())
+    lines.push(ring)
+  }
+
   if (pattern === 'lotus') {
     for (let i = 0; i < 10; i += 1) {
       const angle = (i / 10) * Math.PI * 2
-      ctx.save()
-      ctx.translate(Math.cos(angle) * 0.92, Math.sin(angle) * 0.62)
-      ctx.rotate(angle + Math.PI / 2)
-      ctx.beginPath()
-      ctx.moveTo(0, -0.1)
-      ctx.quadraticCurveTo(0.08, 0, 0, 0.1)
-      ctx.quadraticCurveTo(-0.08, 0, 0, -0.1)
-      ctx.stroke()
-      ctx.restore()
+      const center = new THREE.Vector2(
+        Math.cos(angle) * 0.92,
+        Math.sin(angle) * 0.62,
+      )
+      const direction = new THREE.Vector2(Math.cos(angle), Math.sin(angle))
+      const side = new THREE.Vector2(-Math.sin(angle), Math.cos(angle))
+      const petal: THREE.Vector2[] = []
+      for (let step = 0; step <= 8; step += 1) {
+        const t = step / 8
+        petal.push(
+          center
+            .clone()
+            .addScaledVector(direction, -0.08 + 0.2 * t)
+            .addScaledVector(side, Math.sin(Math.PI * t) * 0.05),
+        )
+      }
+      for (let step = 7; step >= 0; step -= 1) {
+        const t = step / 8
+        petal.push(
+          center
+            .clone()
+            .addScaledVector(direction, -0.08 + 0.2 * t)
+            .addScaledVector(side, -Math.sin(Math.PI * t) * 0.05),
+        )
+      }
+      lines.push(petal)
     }
-    return
+    return lines
   }
 
   if (pattern === 'cloud') {
     for (let i = 0; i < 12; i += 1) {
       const angle = (i / 12) * Math.PI * 2
-      ctx.beginPath()
-      ctx.arc(
-        Math.cos(angle) * 0.92,
-        Math.sin(angle) * 0.62,
-        0.12,
-        angle,
-        angle + Math.PI * 1.1,
-      )
-      ctx.stroke()
+      const centerX = Math.cos(angle) * 0.92
+      const centerY = Math.sin(angle) * 0.62
+      const arc: THREE.Vector2[] = []
+      for (let step = 0; step <= 8; step += 1) {
+        const arcAngle = angle + (step / 8) * Math.PI * 1.1
+        arc.push(
+          new THREE.Vector2(
+            centerX + Math.cos(arcAngle) * 0.12,
+            centerY + Math.sin(arcAngle) * 0.12,
+          ),
+        )
+      }
+      lines.push(arc)
     }
-    return
+    return lines
   }
 
   if (pattern === 'wave') {
     for (let ring = 0; ring < 3; ring += 1) {
       const rx = 0.6 + ring * 0.14
       const ry = 0.4 + ring * 0.1
-      ctx.beginPath()
-      for (let i = 0; i <= 160; i += 1) {
-        const angle = (i / 160) * Math.PI * 2
+      const wave: THREE.Vector2[] = []
+      for (let step = 0; step <= 64; step += 1) {
+        const angle = (step / 64) * Math.PI * 2
         const wobble = 1 + Math.sin(angle * 8 + ring * 1.2) * 0.025
-        const x = Math.cos(angle) * rx * wobble
-        const y = Math.sin(angle) * ry * wobble
-        if (i === 0) ctx.moveTo(x, y)
-        else ctx.lineTo(x, y)
+        wave.push(
+          new THREE.Vector2(
+            Math.cos(angle) * rx * wobble,
+            Math.sin(angle) * ry * wobble,
+          ),
+        )
       }
-      ctx.closePath()
-      ctx.stroke()
+      lines.push(wave)
     }
-    return
+    return lines
   }
 
   for (let i = 0; i < 10; i += 1) {
     const angle = (i / 10) * Math.PI * 2
-    ctx.save()
-    ctx.translate(Math.cos(angle) * 0.92, Math.sin(angle) * 0.62)
-    ctx.rotate(angle + Math.PI / 2)
-    ctx.beginPath()
-    ctx.moveTo(-0.07, -0.07)
-    ctx.lineTo(0.07, -0.07)
-    ctx.lineTo(0.07, 0.07)
-    ctx.lineTo(-0.03, 0.07)
-    ctx.lineTo(-0.03, 0)
-    ctx.lineTo(0.02, 0)
-    ctx.stroke()
-    ctx.restore()
+    const center = new THREE.Vector2(
+      Math.cos(angle) * 0.92,
+      Math.sin(angle) * 0.62,
+    )
+    const rotation = angle + Math.PI / 2
+    const local = [
+      new THREE.Vector2(-0.07, -0.07),
+      new THREE.Vector2(0.07, -0.07),
+      new THREE.Vector2(0.07, 0.07),
+      new THREE.Vector2(-0.03, 0.07),
+      new THREE.Vector2(-0.03, 0),
+      new THREE.Vector2(0.02, 0),
+    ]
+    lines.push(
+      local.map(
+        (point) =>
+          new THREE.Vector2(
+            center.x + point.x * Math.cos(rotation) - point.y * Math.sin(rotation),
+            center.y + point.x * Math.sin(rotation) + point.y * Math.cos(rotation),
+          ),
+      ),
+    )
   }
+
+  return lines
 }
 
-function createPatternTextures(
-  shape: InkstoneShape,
-  pattern: InkstonePattern,
-  patternScale: number,
-) {
-  const size = PATTERN_CANVAS_SIZE
-  const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return null
-
-  const scaleX = size / PATTERN_WORLD_WIDTH
-  const scaleY = size / PATTERN_WORLD_HEIGHT
-  ctx.setTransform(scaleX, 0, 0, -scaleY, size / 2, size / 2)
-
-  const parts = createShape(shape)
-  ctx.save()
-  traceShape(ctx, parts.outer)
-  ctx.clip()
-  ctx.save()
-  ctx.scale(patternScale, patternScale)
-
-  ctx.strokeStyle = 'rgba(199, 168, 107, 0.92)'
-  ctx.lineWidth = 0.012
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  traceShape(ctx, parts.outer, 0.86)
-  ctx.stroke()
-  traceShape(ctx, parts.outer, 0.79)
-  ctx.stroke()
-  drawPattern(ctx, pattern)
-  ctx.restore()
-  ctx.restore()
-
-  ctx.globalCompositeOperation = 'destination-out'
-  for (const pool of parts.pools) {
-    traceShape(ctx, pool)
-    ctx.fill()
+function mergeBoxes(geometries: THREE.BufferGeometry[]) {
+  let vertexCount = 0
+  let indexCount = 0
+  for (const geometry of geometries) {
+    vertexCount += geometry.attributes.position.count
+    indexCount += geometry.index?.count ?? 0
   }
-  ctx.globalCompositeOperation = 'source-over'
 
-  const source = ctx.getImageData(0, 0, size, size)
-  const normalCanvas = document.createElement('canvas')
-  normalCanvas.width = size
-  normalCanvas.height = size
-  const normalCtx = normalCanvas.getContext('2d')
-  if (!normalCtx) return null
+  const positions = new Float32Array(vertexCount * 3)
+  const normals = new Float32Array(vertexCount * 3)
+  const uvs = new Float32Array(vertexCount * 2)
+  const indices = new Uint32Array(indexCount)
+  let vertexOffset = 0
+  let indexOffset = 0
+  let vertexBase = 0
 
-  const normalImage = normalCtx.createImageData(size, size)
-  const heightAt = (x: number, y: number) =>
-    source.data[(y * size + x) * 4 + 3] / 255
-  const strength = 3.2
+  for (const geometry of geometries) {
+    const position = geometry.getAttribute('position') as THREE.BufferAttribute
+    const normal = geometry.getAttribute('normal') as THREE.BufferAttribute
+    const uv = geometry.getAttribute('uv') as THREE.BufferAttribute
+    positions.set(position.array as Float32Array, vertexOffset * 3)
+    normals.set(normal.array as Float32Array, vertexOffset * 3)
+    uvs.set(uv.array as Float32Array, vertexOffset * 2)
+    if (geometry.index) {
+      for (let i = 0; i < geometry.index.count; i += 1) {
+        indices[indexOffset + i] = geometry.index.getX(i) + vertexBase
+      }
+      indexOffset += geometry.index.count
+    }
+    vertexOffset += position.count
+    vertexBase += position.count
+  }
 
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const left = heightAt(Math.max(x - 1, 0), y)
-      const right = heightAt(Math.min(x + 1, size - 1), y)
-      const up = heightAt(x, Math.max(y - 1, 0))
-      const down = heightAt(x, Math.min(y + 1, size - 1))
-      const nx = (left - right) * strength
-      const ny = (up - down) * strength
-      const length = Math.hypot(nx, ny, 1)
-      const index = (y * size + x) * 4
-      normalImage.data[index] = ((nx / length) * 0.5 + 0.5) * 255
-      normalImage.data[index + 1] = ((ny / length) * 0.5 + 0.5) * 255
-      normalImage.data[index + 2] = (1 / length) * 0.5 * 255 + 127.5
-      normalImage.data[index + 3] = 255
+  const merged = new THREE.BufferGeometry()
+  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+  merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  merged.setIndex(new THREE.BufferAttribute(indices, 1))
+  return merged
+}
+
+function createGrooveGeometry(lines: THREE.Vector2[][]) {
+  const boxes: THREE.BufferGeometry[] = []
+  const centerY = BODY_TOP + 0.002 - GROOVE_HEIGHT / 2
+
+  for (const line of lines) {
+    for (let i = 0; i < line.length - 1; i += 1) {
+      const from = line[i]
+      const to = line[i + 1]
+      const fromX = from.x
+      const fromZ = -from.y
+      const toX = to.x
+      const toZ = -to.y
+      const dx = toX - fromX
+      const dz = toZ - fromZ
+      const length = Math.hypot(dx, dz)
+      if (length < 0.002) continue
+
+      const box = new THREE.BoxGeometry(
+        length + GROOVE_WIDTH,
+        GROOVE_HEIGHT,
+        GROOVE_WIDTH,
+      )
+      const matrix = new THREE.Matrix4()
+      matrix.makeRotationY(Math.atan2(-dz, dx))
+      matrix.setPosition((fromX + toX) / 2, centerY, (fromZ + toZ) / 2)
+      box.applyMatrix4(matrix)
+      boxes.push(box)
     }
   }
-  normalCtx.putImageData(normalImage, 0, 0)
 
-  const map = new THREE.CanvasTexture(canvas)
-  map.colorSpace = THREE.SRGBColorSpace
-  map.anisotropy = 8
-  map.needsUpdate = true
+  if (boxes.length === 0) return null
+  const merged = mergeBoxes(boxes)
+  for (const box of boxes) box.dispose()
+  return merged
+}
 
-  const normalMap = new THREE.CanvasTexture(normalCanvas)
-  normalMap.colorSpace = THREE.NoColorSpace
-  normalMap.anisotropy = 8
-  normalMap.needsUpdate = true
+function createGroovedBody(shape: InkstoneShape, pattern: InkstonePattern) {
+  const parts = createShape(shape)
+  parts.outer.holes = parts.pools.map(reverseShape)
 
-  return { map, normalMap }
+  const body = new THREE.ExtrudeGeometry(parts.outer, {
+    depth: THICKNESS,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    bevelSize: 0.035,
+    bevelThickness: 0.025,
+    curveSegments: 48,
+  })
+  body.rotateX(-Math.PI / 2)
+  body.translate(0, -THICKNESS, 0)
+  body.computeVertexNormals()
+
+  const grooves = createGrooveGeometry(patternPolylines(shape, pattern))
+  if (!grooves) return body
+
+  const bodyBrush = new Brush(body)
+  const grooveBrush = new Brush(grooves)
+  bodyBrush.updateMatrixWorld()
+  grooveBrush.updateMatrixWorld()
+
+  const result = evaluator.evaluate(bodyBrush, grooveBrush, SUBTRACTION)
+  const geometry = result.geometry
+  geometry.computeVertexNormals()
+  body.dispose()
+  grooves.dispose()
+  return geometry
 }
 
 function InkstoneModel({
   shape,
   pattern,
-  patternScale,
 }: {
   shape: InkstoneShape
   pattern: InkstonePattern
-  patternScale: number
 }) {
   const model = useMemo(() => {
+    const body = createGroovedBody(shape, pattern)
     const parts = createShape(shape)
-    parts.outer.holes = parts.pools.map(reverseShape)
-
-    const body = new THREE.ExtrudeGeometry(parts.outer, {
-      depth: THICKNESS,
-      bevelEnabled: true,
-      bevelSegments: 4,
-      bevelSize: 0.035,
-      bevelThickness: 0.025,
-      curveSegments: 48,
-    })
-    body.rotateX(-Math.PI / 2)
-    body.translate(0, -THICKNESS, 0)
-    body.computeVertexNormals()
-
     return {
       body,
       pools: parts.pools.map((pool) => new THREE.ShapeGeometry(pool)),
     }
-  }, [shape])
-
-  const overlay = useMemo(
-    () => createPatternTextures(shape, pattern, patternScale),
-    [shape, pattern, patternScale],
-  )
-
-  const overlayNormalScale = useMemo(
-    () => new THREE.Vector2(1.2, 1.2),
-    [],
-  )
+  }, [shape, pattern])
 
   useEffect(() => {
     return () => {
@@ -332,13 +357,6 @@ function InkstoneModel({
       for (const pool of model.pools) pool.dispose()
     }
   }, [model])
-
-  useEffect(() => {
-    return () => {
-      overlay?.map.dispose()
-      overlay?.normalMap.dispose()
-    }
-  }, [overlay])
 
   return (
     <group position={[0, 0.05, 0]} rotation={[0.12, -0.4, 0.02]}>
@@ -369,27 +387,6 @@ function InkstoneModel({
         </mesh>
       ))}
 
-      {overlay && (
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0.032, 0]}
-          renderOrder={1}
-        >
-          <planeGeometry args={[PATTERN_WORLD_WIDTH, PATTERN_WORLD_HEIGHT]} />
-          <meshStandardMaterial
-            map={overlay.map}
-            normalMap={overlay.normalMap}
-            normalScale={overlayNormalScale}
-            transparent
-            depthWrite={false}
-            roughness={0.38}
-            metalness={0.32}
-            toneMapped={false}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      )}
-
       <RoundedBox
         args={[2.6, 0.18, 1.75]}
         radius={0.07}
@@ -419,11 +416,9 @@ function InkstoneModel({
 export function InkstoneViewer({
   shape,
   pattern,
-  patternScale = 1,
 }: {
   shape: InkstoneShape
   pattern: InkstonePattern
-  patternScale?: number
 }) {
   return (
     <Canvas
@@ -447,11 +442,7 @@ export function InkstoneViewer({
         intensity={1.5}
         color="#e2d0a6"
       />
-      <InkstoneModel
-        shape={shape}
-        pattern={pattern}
-        patternScale={patternScale}
-      />
+      <InkstoneModel shape={shape} pattern={pattern} />
       <ContactShadows
         position={[0, -0.44, 0]}
         opacity={0.45}

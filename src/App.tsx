@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { ContactShadows, OrbitControls } from '@react-three/drei'
+import { ContactShadows, OrbitControls, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import Gallery from './pages/Gallery'
 import Studio from './pages/Studio'
@@ -123,99 +123,67 @@ const timeline = [
 ]
 
 function StoneModel() {
-  const [textures, setTextures] = useState<{
-    map: THREE.Texture | null
-    normalMap: THREE.Texture | null
-    roughnessMap: THREE.Texture | null
-  }>({ map: null, normalMap: null, roughnessMap: null })
+  const { scene } = useGLTF('models/boulder_01/boulder_01_1k.gltf')
+
+  const model = useMemo(() => {
+    const clone = scene.clone(true)
+    clone.updateMatrixWorld(true)
+
+    const box = new THREE.Box3().setFromObject(clone)
+    const size = box.getSize(new THREE.Vector3())
+    const maxDimension = Math.max(size.x, size.y, size.z)
+    const scale = 2.4 / maxDimension
+    clone.scale.setScalar(scale)
+    clone.updateMatrixWorld(true)
+
+    const scaledBox = new THREE.Box3().setFromObject(clone)
+    const center = scaledBox.getCenter(new THREE.Vector3())
+    clone.position.x -= center.x
+    clone.position.z -= center.z
+    clone.position.y -= scaledBox.min.y + 1.0
+
+    clone.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+        const materials = Array.isArray(child.material)
+          ? child.material
+          : [child.material]
+        const tinted = materials.map((material) => {
+          const next = material.clone()
+          if (next instanceof THREE.MeshStandardMaterial) {
+            next.color.set('#7f9d8c')
+            next.roughness = 0.88
+            next.metalness = 0.02
+            next.envMapIntensity = 0.6
+          }
+          return next
+        })
+        child.material = Array.isArray(child.material)
+          ? tinted
+          : tinted[0]
+      }
+    })
+
+    return clone
+  }, [scene])
 
   useEffect(() => {
-    let cancelled = false
-    const loader = new THREE.TextureLoader()
-
-    Promise.all([
-      loader.loadAsync('textures/stone/rock_05_diff_1k.jpg'),
-      loader.loadAsync('textures/stone/rock_05_nor_gl_1k.jpg'),
-      loader.loadAsync('textures/stone/rock_05_rough_1k.jpg'),
-    ])
-      .then(([map, normalMap, roughnessMap]) => {
-        if (cancelled) {
-          map.dispose()
-          normalMap.dispose()
-          roughnessMap.dispose()
-          return
+    return () => {
+      model.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          const materials = Array.isArray(child.material)
+            ? child.material
+            : [child.material]
+          for (const material of materials) material.dispose()
         }
-        map.colorSpace = THREE.SRGBColorSpace
-        for (const texture of [map, normalMap, roughnessMap]) {
-          texture.wrapS = THREE.RepeatWrapping
-          texture.wrapT = THREE.RepeatWrapping
-          texture.repeat.set(4, 4)
-          texture.anisotropy = 8
-        }
-        setTextures({ map, normalMap, roughnessMap })
       })
-      .catch(() => undefined)
-
-    return () => {
-      cancelled = true
     }
-  }, [])
-
-  const normalScale = useMemo(() => new THREE.Vector2(1.6, 1.6), [])
-
-  const geometry = useMemo(() => {
-    const geo = new THREE.SphereGeometry(1.45, 128, 96)
-    const position = geo.attributes.position as THREE.BufferAttribute
-    const vertex = new THREE.Vector3()
-
-    for (let i = 0; i < position.count; i += 1) {
-      vertex.fromBufferAttribute(position, i)
-      const noise =
-        Math.sin(vertex.x * 2.7) * Math.cos(vertex.y * 3.1) * 0.12 +
-        Math.sin(vertex.z * 4.6 + vertex.x * 1.7) * 0.07
-      vertex.multiplyScalar(1 + noise)
-      vertex.x *= 1.28
-      vertex.y *= 0.58
-      vertex.z *= 0.96
-      position.setXYZ(i, vertex.x, vertex.y, vertex.z)
-    }
-
-    geo.computeVertexNormals()
-    return geo
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      textures.map?.dispose()
-      textures.normalMap?.dispose()
-      textures.roughnessMap?.dispose()
-    }
-  }, [textures])
-
-  useEffect(() => () => geometry.dispose(), [geometry])
+  }, [model])
 
   return (
     <group rotation={[0.16, -0.5, 0.08]}>
-      <mesh geometry={geometry} castShadow receiveShadow>
-        <meshPhysicalMaterial
-          map={textures.map}
-          normalMap={textures.normalMap}
-          roughnessMap={textures.roughnessMap}
-          normalScale={normalScale}
-          color="#5d7a69"
-          roughness={0.95}
-          metalness={0.02}
-          clearcoat={0}
-        />
-      </mesh>
-      <mesh geometry={geometry} scale={1.004}>
-        <meshBasicMaterial
-          color="#c7a86b"
-          wireframe
-          transparent
-          opacity={0.055}
-        />
-      </mesh>
+      <primitive object={model} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.02, 0]}>
         <ringGeometry args={[1.6, 1.68, 96]} />
         <meshBasicMaterial
@@ -228,6 +196,8 @@ function StoneModel() {
     </group>
   )
 }
+
+useGLTF.preload('models/boulder_01/boulder_01_1k.gltf')
 
 function StoneStage() {
   return (
@@ -252,7 +222,9 @@ function StoneStage() {
         intensity={1.8}
         color="#e2d0a6"
       />
-      <StoneModel />
+      <Suspense fallback={null}>
+        <StoneModel />
+      </Suspense>
       <ContactShadows
         position={[0, -1.06, 0]}
         opacity={0.5}
@@ -571,13 +543,13 @@ function Home() {
                 转到掌心
               </h2>
               <p className="section-desc">
-                基于实地采集的原石影像与传承人提供的实物参考，我们正在建立洮砚数字模型库。拖拽、旋转、缩放，先从一块数字原石开始。
+                当前用 Poly Haven CC0 岩石模型做原石交互原型；真实洮砚原石与器型模型，需要后续用授权照片做摄影测量或实物扫描。拖拽、旋转、缩放，先从一块数字原石开始。
               </p>
 
               <ul className="check-list">
-                <li>原石与经典砚台器型的高精度 3D 模型</li>
+                <li>原石交互原型与参数化砚台器型</li>
                 <li>可旋转、可缩放、可点击热点的线上展厅</li>
-                <li>模型与纹样均由非遗传承人参与校验</li>
+                <li>正式模型与纹样需由非遗传承人参与校验</li>
               </ul>
 
               <a className="btn btn-ghost" href="#journey">

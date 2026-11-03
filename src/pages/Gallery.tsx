@@ -229,7 +229,7 @@ function Gallery() {
                 <div className="section-label">参数化器型 · 3D</div>
                 <h2>{stageLabel}</h2>
                 <p>
-                  拖拽旋转，滚轮缩放。模型按器型参数生成，用来观察砚池、边线与纹样位置；纹样为叠加与法线示意，不是实际雕刻。
+                  拖拽旋转，滚轮缩放。模型按器型参数生成，纹样通过几何布尔运算刻入砚面；这是可旋转的真实 3D 刻槽，不是平面贴图。
                 </p>
               </div>
               <div className="inkstone-stage-controls">

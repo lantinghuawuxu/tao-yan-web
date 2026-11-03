@@ -6,6 +6,7 @@ import {
   type ChangeEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { Carve3D } from '../components/Carve3D'
 import { InkstoneViewer } from '../components/InkstoneViewer'
 import '../Studio.css'
 
@@ -279,6 +280,8 @@ function Studio() {
   const [pattern, setPattern] = useState(patterns[0])
   const [patternScale, setPatternScale] = useState(1)
   const [previewMode, setPreviewMode] = useState<'stone' | 'inkstone'>('stone')
+  const [carveMode, setCarveMode] = useState<'2d' | '3d'>('2d')
+  const [carve3DKey, setCarve3DKey] = useState(0)
   const [showGuide, setShowGuide] = useState(true)
   const [tool, setTool] = useState<Tool>('chisel')
   const [brushSize, setBrushSize] = useState(28)
@@ -1010,13 +1013,12 @@ function Studio() {
                       <InkstoneViewer
                         shape="随形"
                         pattern={pattern.id}
-                        patternScale={patternScale}
                       />
                       <span className="preview-tag">3D 器型预览</span>
                       <span className="preview-live">LIVE 3D</span>
                       <span className="preview-hint">拖拽旋转 · 滚轮缩放</span>
                       <span className="preview-name">
-                        {pattern.name} · {Math.round(patternScale * 100)}%
+                        {pattern.name} · 3D 刻槽
                       </span>
                     </div>
                   )}
@@ -1033,6 +1035,23 @@ function Studio() {
             {step === 4 && (
               <div className="carve-layout">
                 <div className="carve-main">
+                  <div className="carve-mode-switch" aria-label="雕刻模式">
+                    <button
+                      type="button"
+                      className={carveMode === '2d' ? 'active' : ''}
+                      onClick={() => setCarveMode('2d')}
+                    >
+                      2D 刻痕
+                    </button>
+                    <button
+                      type="button"
+                      className={carveMode === '3d' ? 'active' : ''}
+                      onClick={() => setCarveMode('3d')}
+                    >
+                      3D 雕刻
+                    </button>
+                  </div>
+
                   <div className="carve-toolbar">
                     <div className="tool-group">
                       {tools.map((item) => (
@@ -1066,16 +1085,31 @@ function Studio() {
                     </div>
 
                     <div className="tool-actions">
-                      <button type="button" onClick={undo}>
-                        撤销
-                      </button>
-                      <button type="button" onClick={resetSurface}>
-                        清除
-                      </button>
+                      {carveMode === '2d' ? (
+                        <>
+                          <button type="button" onClick={undo}>
+                            撤销
+                          </button>
+                          <button type="button" onClick={resetSurface}>
+                            清除
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setCarve3DKey((key) => key + 1)}
+                        >
+                          重置 3D 刻面
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <div className="carve-stage">
+                  <div
+                    className={`carve-stage ${
+                      carveMode === '3d' ? 'is-hidden' : ''
+                    }`}
+                  >
                     <img
                       className="carve-base"
                       src={activeImage}
@@ -1106,6 +1140,15 @@ function Studio() {
                     </span>
                   </div>
 
+                  {carveMode === '3d' && (
+                    <div className="carve-3d-stage" key={carve3DKey}>
+                      <Carve3D tool={tool} brushSize={brushSize} />
+                      <span className="carve-hint">
+                        按住拖动，在石面上刻出真实 3D 凹槽
+                      </span>
+                    </div>
+                  )}
+
                   <div className="carve-footer">
                     <span>
                       {materialName} · {pattern.name} · {activeTool.label}
@@ -1118,13 +1161,19 @@ function Studio() {
                       >
                         上一步
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={finish}
-                      >
-                        完成作品
-                      </button>
+                      {carveMode === '2d' ? (
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={finish}
+                        >
+                          完成作品
+                        </button>
+                      ) : (
+                        <span className="step-note">
+                          3D 刻面为交互预览，切回 2D 完成作品
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1156,7 +1205,9 @@ function Studio() {
                   <div className="side-card side-note">
                     <span>关于虚拟雕刻</span>
                     <p>
-                      本 Demo 用数字方式模拟刻痕。真实洮砚雕刻需要匠人根据石料纹理手工完成。
+                      {carveMode === '3d'
+                        ? '3D 刻面通过高度位移生成真实凹槽；完成作品请切回 2D。'
+                        : '本 Demo 用数字方式模拟刻痕。真实洮砚雕刻需要匠人根据石料纹理手工完成。'}
                     </p>
                   </div>
                 </aside>
