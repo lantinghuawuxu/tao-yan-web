@@ -932,6 +932,31 @@
   display: block;
 }
 
+.carve-3d-modes {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(6, 18, 14, 0.72);
+  border: 1px solid rgba(199, 168, 107, 0.28);
+}
+
+.carve-3d-modes button {
+  padding: 5px 10px;
+  font-size: 10px;
+  color: rgba(245, 241, 230, 0.62);
+  background: transparent;
+  border: 0;
+}
+
+.carve-3d-modes button.active {
+  color: var(--ink);
+  background: var(--gold-light);
+}
+
 .carve-stage::after {
   content: '';
   position: absolute;

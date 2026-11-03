@@ -282,6 +282,7 @@ function Studio() {
   const [previewMode, setPreviewMode] = useState<'stone' | 'inkstone'>('stone')
   const [carveMode, setCarveMode] = useState<'2d' | '3d'>('2d')
   const [carve3DKey, setCarve3DKey] = useState(0)
+  const [carve3DMode, setCarve3DMode] = useState<'carve' | 'orbit'>('carve')
   const [showGuide, setShowGuide] = useState(true)
   const [tool, setTool] = useState<Tool>('chisel')
   const [brushSize, setBrushSize] = useState(28)
@@ -1142,9 +1143,32 @@ function Studio() {
 
                   {carveMode === '3d' && (
                     <div className="carve-3d-stage" key={carve3DKey}>
-                      <Carve3D tool={tool} brushSize={brushSize} />
+                      <Carve3D
+                        tool={tool}
+                        brushSize={brushSize}
+                        pattern={pattern.id}
+                        orbit={carve3DMode === 'orbit'}
+                      />
+                      <div className="carve-3d-modes" aria-label="3D 视角">
+                        <button
+                          type="button"
+                          className={carve3DMode === 'carve' ? 'active' : ''}
+                          onClick={() => setCarve3DMode('carve')}
+                        >
+                          雕刻
+                        </button>
+                        <button
+                          type="button"
+                          className={carve3DMode === 'orbit' ? 'active' : ''}
+                          onClick={() => setCarve3DMode('orbit')}
+                        >
+                          旋转
+                        </button>
+                      </div>
                       <span className="carve-hint">
-                        按住拖动，在石面上刻出真实 3D 凹槽
+                        {carve3DMode === 'orbit'
+                          ? '拖动旋转 · 滚轮缩放'
+                          : '按住拖动，在石面上刻出真实 3D 凹槽'}
                       </span>
                     </div>
                   )}
