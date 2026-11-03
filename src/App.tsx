@@ -123,16 +123,56 @@ const timeline = [
 ]
 
 function StoneModel() {
+  const [textures, setTextures] = useState<{
+    map: THREE.Texture | null
+    normalMap: THREE.Texture | null
+    roughnessMap: THREE.Texture | null
+  }>({ map: null, normalMap: null, roughnessMap: null })
+
+  useEffect(() => {
+    let cancelled = false
+    const loader = new THREE.TextureLoader()
+
+    Promise.all([
+      loader.loadAsync('textures/stone/rock_05_diff_1k.jpg'),
+      loader.loadAsync('textures/stone/rock_05_nor_gl_1k.jpg'),
+      loader.loadAsync('textures/stone/rock_05_rough_1k.jpg'),
+    ])
+      .then(([map, normalMap, roughnessMap]) => {
+        if (cancelled) {
+          map.dispose()
+          normalMap.dispose()
+          roughnessMap.dispose()
+          return
+        }
+        map.colorSpace = THREE.SRGBColorSpace
+        for (const texture of [map, normalMap, roughnessMap]) {
+          texture.wrapS = THREE.RepeatWrapping
+          texture.wrapT = THREE.RepeatWrapping
+          texture.repeat.set(3, 3)
+          texture.anisotropy = 8
+        }
+        setTextures({ map, normalMap, roughnessMap })
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const normalScale = useMemo(() => new THREE.Vector2(1.2, 1.2), [])
+
   const geometry = useMemo(() => {
-    const geo = new THREE.IcosahedronGeometry(1.45, 6)
+    const geo = new THREE.SphereGeometry(1.45, 128, 96)
     const position = geo.attributes.position as THREE.BufferAttribute
     const vertex = new THREE.Vector3()
 
     for (let i = 0; i < position.count; i += 1) {
       vertex.fromBufferAttribute(position, i)
       const noise =
-        Math.sin(vertex.x * 2.7) * Math.cos(vertex.y * 3.1) * 0.1 +
-        Math.sin(vertex.z * 4.6 + vertex.x * 1.7) * 0.06
+        Math.sin(vertex.x * 2.7) * Math.cos(vertex.y * 3.1) * 0.12 +
+        Math.sin(vertex.z * 4.6 + vertex.x * 1.7) * 0.07
       vertex.multiplyScalar(1 + noise)
       vertex.x *= 1.28
       vertex.y *= 0.58
@@ -144,17 +184,28 @@ function StoneModel() {
     return geo
   }, [])
 
+  useEffect(() => {
+    return () => {
+      textures.map?.dispose()
+      textures.normalMap?.dispose()
+      textures.roughnessMap?.dispose()
+    }
+  }, [textures])
+
   useEffect(() => () => geometry.dispose(), [geometry])
 
   return (
     <group rotation={[0.16, -0.5, 0.08]}>
       <mesh geometry={geometry} castShadow receiveShadow>
         <meshPhysicalMaterial
-          color="#4d7264"
-          roughness={0.7}
-          metalness={0.06}
-          clearcoat={0.16}
-          clearcoatRoughness={0.7}
+          map={textures.map}
+          normalMap={textures.normalMap}
+          roughnessMap={textures.roughnessMap}
+          normalScale={normalScale}
+          color="#6f8b7a"
+          roughness={0.92}
+          metalness={0.02}
+          clearcoat={0}
         />
       </mesh>
       <mesh geometry={geometry} scale={1.004}>

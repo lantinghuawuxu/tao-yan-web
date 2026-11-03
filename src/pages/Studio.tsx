@@ -6,6 +6,7 @@ import {
   type ChangeEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { InkstoneViewer } from '../components/InkstoneViewer'
 import '../Studio.css'
 
 type Step = 1 | 2 | 3 | 4 | 5
@@ -277,6 +278,7 @@ function Studio() {
   const [scanned, setScanned] = useState(false)
   const [pattern, setPattern] = useState(patterns[0])
   const [patternScale, setPatternScale] = useState(1)
+  const [previewMode, setPreviewMode] = useState<'stone' | 'inkstone'>('stone')
   const [showGuide, setShowGuide] = useState(true)
   const [tool, setTool] = useState<Tool>('chisel')
   const [brushSize, setBrushSize] = useState(28)
@@ -970,23 +972,59 @@ function Studio() {
                 </div>
 
                 <div className="preview-panel">
-                  <div className="preview-frame">
-                    <img src={activeImage} alt={materialName} />
-                    <div
-                      className="pattern-overlay"
-                      style={{
-                        transform: `scale(${patternScale})`,
-                      }}
+                  <div className="preview-switch" aria-label="预览方式">
+                    <button
+                      type="button"
+                      className={previewMode === 'stone' ? 'active' : ''}
+                      onClick={() => setPreviewMode('stone')}
                     >
-                      <PatternArt id={pattern.id} />
-                    </div>
-                    <span className="preview-tag">纹样辅助线</span>
-                    <span className="preview-name">
-                      {pattern.name} · {Math.round(patternScale * 100)}%
-                    </span>
+                      石面纹样
+                    </button>
+                    <button
+                      type="button"
+                      className={previewMode === 'inkstone' ? 'active' : ''}
+                      onClick={() => setPreviewMode('inkstone')}
+                    >
+                      3D 砚台
+                    </button>
                   </div>
+
+                  {previewMode === 'stone' ? (
+                    <div className="preview-frame">
+                      <img src={activeImage} alt={materialName} />
+                      <div
+                        className="pattern-overlay"
+                        style={{
+                          transform: `scale(${patternScale})`,
+                        }}
+                      >
+                        <PatternArt id={pattern.id} />
+                      </div>
+                      <span className="preview-tag">纹样辅助线</span>
+                      <span className="preview-name">
+                        {pattern.name} · {Math.round(patternScale * 100)}%
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="preview-frame preview-frame-3d">
+                      <InkstoneViewer
+                        shape="随形"
+                        pattern={pattern.id}
+                        patternScale={patternScale}
+                      />
+                      <span className="preview-tag">3D 器型预览</span>
+                      <span className="preview-live">LIVE 3D</span>
+                      <span className="preview-hint">拖拽旋转 · 滚轮缩放</span>
+                      <span className="preview-name">
+                        {pattern.name} · {Math.round(patternScale * 100)}%
+                      </span>
+                    </div>
+                  )}
+
                   <p className="preview-note">
-                    金色线条只是辅助。真正的刻痕由你决定，也可以完全抛开纹样自由发挥。
+                    {previewMode === 'stone'
+                      ? '金色线条只是辅助。真正的刻痕由你决定，也可以完全抛开纹样自由发挥。'
+                      : '3D 预览为器型与纹样示意；正式器型与纹样需由传承人/馆方审校。'}
                   </p>
                 </div>
               </div>

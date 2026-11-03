@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import {
+  InkstoneViewer,
+  type InkstonePattern,
+  type InkstoneShape as Shape,
+} from '../components/InkstoneViewer'
 import '../Gallery.css'
-
-type Shape = '随形' | '长方' | '椭圆' | '圆形' | '双池'
 
 type Inkstone = {
   id: string
@@ -132,14 +135,25 @@ const filters: ('全部' | Shape)[] = [
   '双池',
 ]
 
+const patternLabels: Record<InkstonePattern, string> = {
+  lotus: '莲纹',
+  cloud: '云纹',
+  wave: '水波',
+  meander: '回纹',
+}
+
 function Gallery() {
   const [filter, setFilter] = useState<(typeof filters)[number]>('全部')
+  const [pattern, setPattern] = useState<InkstonePattern>('lotus')
   const [active, setActive] = useState<Inkstone | null>(null)
 
   const visible =
     filter === '全部'
       ? inkstones
       : inkstones.filter((item) => item.shape === filter)
+
+  const stageShape: Shape = filter === '全部' ? '长方' : filter
+  const stageLabel = filter === '全部' ? '长方 · 示例' : filter
 
   useEffect(() => {
     if (!active) return
@@ -201,6 +215,45 @@ function Gallery() {
                 {item}
               </button>
             ))}
+          </div>
+
+          <div className="inkstone-stage">
+            <div className="inkstone-stage-canvas">
+              <span className="live-tag">数字砚台 · 交互预览</span>
+              <span className="live-badge">LIVE 3D</span>
+              <span className="live-hint">拖拽旋转 · 滚轮缩放</span>
+              <InkstoneViewer shape={stageShape} pattern={pattern} />
+            </div>
+            <div className="inkstone-stage-panel">
+              <div className="inkstone-stage-copy">
+                <div className="section-label">参数化器型 · 3D</div>
+                <h2>{stageLabel}</h2>
+                <p>
+                  拖拽旋转，滚轮缩放。模型按器型参数生成，用来观察砚池、边线与纹样位置；纹样为叠加与法线示意，不是实际雕刻。
+                </p>
+              </div>
+              <div className="inkstone-stage-controls">
+                <div className="inkstone-stage-patterns" aria-label="纹样叠加">
+                  {(Object.keys(patternLabels) as InkstonePattern[]).map(
+                    (id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`inkstone-pattern-btn ${
+                          pattern === id ? 'active' : ''
+                        }`}
+                        onClick={() => setPattern(id)}
+                      >
+                        {patternLabels[id]}
+                      </button>
+                    ),
+                  )}
+                </div>
+                <p className="inkstone-stage-note">
+                  正式器型与纹样需由传承人/馆方审校。
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="inkstone-grid">
