@@ -1,6 +1,11 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { ContactShadows, OrbitControls, useGLTF } from '@react-three/drei'
+import {
+  ContactShadows,
+  Environment,
+  OrbitControls,
+  useGLTF,
+} from '@react-three/drei'
 import * as THREE from 'three'
 import Gallery from './pages/Gallery'
 import Studio from './pages/Studio'
@@ -223,6 +228,10 @@ function StoneStage() {
         color="#e2d0a6"
       />
       <Suspense fallback={null}>
+        <Environment
+          files="models/hdri/studio_small_08_1k.hdr"
+          background={false}
+        />
         <StoneModel />
       </Suspense>
       <ContactShadows

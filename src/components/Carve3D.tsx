@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { ContactShadows } from '@react-three/drei'
+import { ContactShadows, Environment } from '@react-three/drei'
 import * as THREE from 'three'
+import { useGreenStoneTexture } from './useGreenStoneTexture'
+import { useRockTextures } from './useRockTextures'
 
 type CarveTool = 'chisel' | 'fine' | 'polish'
 
-const CANVAS_SIZE = 512
+const CANVAS_SIZE = 1024
 
 function CarveSurface({
   tool,
@@ -36,9 +38,13 @@ function CarveSurface({
   }, [heightCanvas])
 
   const geometry = useMemo(
-    () => new THREE.PlaneGeometry(2.6, 1.6, 140, 100),
+    () => new THREE.PlaneGeometry(2.6, 1.6, 240, 180),
     [],
   )
+
+  const stoneTextures = useRockTextures(2.2)
+  const greenStone = useGreenStoneTexture(2)
+  const stoneNormalScale = useMemo(() => new THREE.Vector2(0.3, 0.3), [])
 
   const heightTextureRef = useRef(heightTexture)
   const drawingRef = useRef(false)
@@ -58,31 +64,53 @@ function CarveSurface({
     const x = uv.x * CANVAS_SIZE
     const y = (1 - uv.y) * CANVAS_SIZE
     const radius =
-      Math.max(6, brushSize * 0.8) *
+      Math.max(10, brushSize * 1.2) *
       (tool === 'fine' ? 0.5 : tool === 'polish' ? 1.6 : 1)
+    const alpha = tool === 'polish' ? 0.22 : 0.9
+
+    const stamp = (stampX: number, stampY: number) => {
+      const gradient = context.createRadialGradient(
+        stampX,
+        stampY,
+        0,
+        stampX,
+        stampY,
+        radius,
+      )
+      gradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`)
+      gradient.addColorStop(
+        tool === 'polish' ? 0.35 : 0.62,
+        `rgba(255, 255, 255, ${alpha * 0.85})`,
+      )
+      gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+      context.fillStyle = gradient
+      context.beginPath()
+      context.arc(stampX, stampY, radius, 0, Math.PI * 2)
+      context.fill()
+    }
 
     context.save()
-    context.globalAlpha = tool === 'polish' ? 0.22 : 1
-    context.strokeStyle = '#fff'
-    context.fillStyle = '#fff'
-    context.lineCap = 'round'
-    context.lineJoin = 'round'
+    context.globalCompositeOperation = 'lighter'
 
     if (lastUvRef.current) {
       const lastX = lastUvRef.current.x * CANVAS_SIZE
       const lastY = (1 - lastUvRef.current.y) * CANVAS_SIZE
-      context.lineWidth = radius * 2
-      context.beginPath()
-      context.moveTo(lastX, lastY)
-      context.lineTo(x, y)
-      context.stroke()
+      const dx = x - lastX
+      const dy = y - lastY
+      const distance = Math.hypot(dx, dy)
+      const steps = Math.max(
+        1,
+        Math.ceil(distance / Math.max(2, radius * 0.18)),
+      )
+      for (let step = 1; step <= steps; step += 1) {
+        const progress = step / steps
+        stamp(lastX + dx * progress, lastY + dy * progress)
+      }
+    } else {
+      stamp(x, y)
     }
 
-    context.beginPath()
-    context.arc(x, y, radius, 0, Math.PI * 2)
-    context.fill()
     context.restore()
-
     lastUvRef.current = uv.clone()
     heightTextureRef.current.needsUpdate = true
   }
@@ -117,13 +145,17 @@ function CarveSurface({
         }}
       >
         <meshStandardMaterial
-          color="#5f7f70"
-          roughness={0.78}
+          map={greenStone}
+          normalMap={stoneTextures.normalMap}
+          roughnessMap={stoneTextures.roughnessMap}
+          normalScale={stoneNormalScale}
+          color="#ffffff"
+          roughness={0.65}
           metalness={0.02}
           displacementMap={heightTexture}
           displacementScale={-0.2}
           bumpMap={heightTexture}
-          bumpScale={0.5}
+          bumpScale={0.4}
         />
       </mesh>
 
@@ -165,19 +197,26 @@ export function Carve3D({
       camera={{ position: [0, 2.6, 3.8], fov: 35 }}
       gl={{ alpha: true, antialias: true }}
     >
-      <ambientLight intensity={0.75} />
+      <Suspense fallback={null}>
+        <Environment
+          files="models/hdri/studio_small_08_1k.hdr"
+          background={false}
+          environmentIntensity={0.25}
+        />
+      </Suspense>
+      <ambientLight intensity={0.4} />
       <directionalLight
         position={[4, 6, 4]}
-        intensity={2.2}
+        intensity={1.6}
         castShadow
         shadow-mapSize={[1024, 1024]}
       />
-      <pointLight position={[-4, 2, -3]} intensity={1.1} color="#8fbfae" />
+      <pointLight position={[-4, 2, -3]} intensity={0.8} color="#8fbfae" />
       <spotLight
         position={[0, 5, 1]}
         angle={0.6}
         penumbra={1}
-        intensity={1.4}
+        intensity={1}
         color="#e2d0a6"
       />
       <CarveSurface tool={tool} brushSize={brushSize} />

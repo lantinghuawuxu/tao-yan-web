@@ -1,8 +1,15 @@
-import { useEffect, useMemo } from 'react'
+import { Suspense, useEffect, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { ContactShadows, OrbitControls, RoundedBox } from '@react-three/drei'
+import {
+  ContactShadows,
+  Environment,
+  OrbitControls,
+  RoundedBox,
+} from '@react-three/drei'
 import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg'
 import * as THREE from 'three'
+import { useGreenStoneTexture } from './useGreenStoneTexture'
+import { useRockTextures } from './useRockTextures'
 
 export type InkstoneShape = '随形' | '长方' | '椭圆' | '圆形' | '双池'
 export type InkstonePattern = 'lotus' | 'cloud' | 'wave' | 'meander'
@@ -342,6 +349,9 @@ function InkstoneModel({
   shape: InkstoneShape
   pattern: InkstonePattern
 }) {
+  const stoneTextures = useRockTextures(1.2)
+  const greenStone = useGreenStoneTexture(1.2)
+  const normalScale = useMemo(() => new THREE.Vector2(0.45, 0.45), [])
   const model = useMemo(() => {
     const body = createGroovedBody(shape, pattern)
     const parts = createShape(shape)
@@ -362,11 +372,15 @@ function InkstoneModel({
     <group position={[0, 0.05, 0]} rotation={[0.12, -0.4, 0.02]}>
       <mesh geometry={model.body} castShadow receiveShadow>
         <meshPhysicalMaterial
-          color="#5f7f70"
-          roughness={0.38}
-          metalness={0.04}
-          clearcoat={0.32}
-          clearcoatRoughness={0.45}
+          map={greenStone}
+          normalMap={stoneTextures.normalMap}
+          roughnessMap={stoneTextures.roughnessMap}
+          normalScale={normalScale}
+          color="#ffffff"
+          roughness={0.55}
+          metalness={0.03}
+          clearcoat={0.22}
+          clearcoatRoughness={0.5}
         />
       </mesh>
 
@@ -427,19 +441,26 @@ export function InkstoneViewer({
       camera={{ position: [0, 2.3, 3.9], fov: 34 }}
       gl={{ alpha: true, antialias: true }}
     >
-      <ambientLight intensity={0.65} />
+      <Suspense fallback={null}>
+        <Environment
+          files="models/hdri/studio_small_08_1k.hdr"
+          background={false}
+          environmentIntensity={0.2}
+        />
+      </Suspense>
+      <ambientLight intensity={0.35} />
       <directionalLight
         position={[4, 6, 4]}
-        intensity={2.2}
+        intensity={1.6}
         castShadow
         shadow-mapSize={[1024, 1024]}
       />
-      <pointLight position={[-4, 2, -3]} intensity={1.1} color="#8fbfae" />
+      <pointLight position={[-4, 2, -3]} intensity={0.8} color="#8fbfae" />
       <spotLight
         position={[0, 5, 1]}
         angle={0.6}
         penumbra={1}
-        intensity={1.5}
+        intensity={1}
         color="#e2d0a6"
       />
       <InkstoneModel shape={shape} pattern={pattern} />
