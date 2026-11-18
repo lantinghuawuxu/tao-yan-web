@@ -4,9 +4,15 @@ import {
   ContactShadows,
   Environment,
   OrbitControls,
+  RoundedBox,
 } from '@react-three/drei'
 import * as THREE from 'three'
-import type { InkstonePattern } from './InkstoneViewer'
+import {
+  createCarveBody,
+  createShape,
+  type InkstoneShape,
+  type InkstonePattern,
+} from './inkstoneGeometry'
 import { useGreenStoneTexture } from './useGreenStoneTexture'
 import { useRockTextures } from './useRockTextures'
 
@@ -15,6 +21,7 @@ type CarveTool = 'chisel' | 'fine' | 'polish'
 const CANVAS_SIZE = 1024
 const GUIDE_WIDTH = 2.6
 const GUIDE_HEIGHT = 1.6
+const INKSTONE_SHAPE: InkstoneShape = '随形'
 
 function roundedRectPath(
   context: CanvasRenderingContext2D,
@@ -38,15 +45,15 @@ function roundedRectPath(
   context.closePath()
 }
 
-function createGuideTexture(pattern: InkstonePattern) {
+function createGuideTexture(pattern: InkstonePattern, patternScale = 1) {
   const canvas = document.createElement('canvas')
   canvas.width = CANVAS_SIZE
   canvas.height = CANVAS_SIZE
   const context = canvas.getContext('2d')
   if (!context) return null
 
-  const scaleX = CANVAS_SIZE / 2.8
-  const scaleY = CANVAS_SIZE / 1.8
+  const scaleX = (CANVAS_SIZE / GUIDE_WIDTH) * patternScale
+  const scaleY = (CANVAS_SIZE / GUIDE_HEIGHT) * patternScale
   context.setTransform(
     scaleX,
     0,
@@ -135,11 +142,15 @@ function CarveSurface({
   brushSize,
   pattern,
   orbit,
+  patternScale,
+  showGuide,
 }: {
   tool: CarveTool
   brushSize: number
   pattern: InkstonePattern
   orbit: boolean
+  patternScale: number
+  showGuide: boolean
 }) {
   const heightCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -149,6 +160,23 @@ function CarveSurface({
     if (context) {
       context.fillStyle = '#000'
       context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
+      // 预置砚池凹陷：让雕刻面在砚池位置下沉，露出下方深色砚池片
+      const { pools } = createShape(INKSTONE_SHAPE)
+      context.fillStyle = 'rgba(255, 255, 255, 1)'
+      for (const pool of pools) {
+        const points = pool.getPoints(64)
+        context.beginPath()
+        points.forEach((point, index) => {
+          const px = ((point.x + GUIDE_WIDTH / 2) / GUIDE_WIDTH) * CANVAS_SIZE
+          // 注意 Y 反向：shape 的 +Y 经 rotateX(-90°) 映射到世界 -Z，
+          // 与池片 ShapeGeometry 的朝向保持一致
+          const py = ((GUIDE_HEIGHT / 2 - point.y) / GUIDE_HEIGHT) * CANVAS_SIZE
+          if (index === 0) context.moveTo(px, py)
+          else context.lineTo(px, py)
+        })
+        context.closePath()
+        context.fill()
+      }
     }
     return canvas
   }, [])
@@ -179,8 +207,8 @@ function CarveSurface({
   }, [colorCanvas])
 
   const guideTexture = useMemo(
-    () => createGuideTexture(pattern),
-    [pattern],
+    () => createGuideTexture(pattern, patternScale),
+    [pattern, patternScale],
   )
 
   const geometry = useMemo(
@@ -188,9 +216,22 @@ function CarveSurface({
     [],
   )
 
+  const poolGeometries = useMemo(
+    () =>
+      createShape(INKSTONE_SHAPE).pools.map(
+        (pool) => new THREE.ShapeGeometry(pool),
+      ),
+    [],
+  )
+
+  const bodyGeometry = useMemo(
+    () => createCarveBody(GUIDE_WIDTH, GUIDE_HEIGHT),
+    [],
+  )
+
   const stoneTextures = useRockTextures(2.2)
   const greenStone = useGreenStoneTexture(2)
-  const stoneNormalScale = useMemo(() => new THREE.Vector2(0.3, 0.3), [])
+  const stoneNormalScale = useMemo(() => new THREE.Vector2(0.12, 0.12), [])
 
   const heightTextureRef = useRef(heightTexture)
   const colorTextureRef = useRef(colorTexture)
@@ -206,6 +247,13 @@ function CarveSurface({
   useEffect(() => () => heightTexture.dispose(), [heightTexture])
   useEffect(() => () => colorTexture.dispose(), [colorTexture])
   useEffect(() => () => guideTexture?.dispose(), [guideTexture])
+  useEffect(
+    () => () => {
+      for (const pool of poolGeometries) pool.dispose()
+    },
+    [poolGeometries],
+  )
+  useEffect(() => () => bodyGeometry.dispose(), [bodyGeometry])
 
   const paint = (uv: THREE.Vector2) => {
     const heightContext = heightCanvas.getContext('2d')
@@ -214,46 +262,93 @@ function CarveSurface({
 
     const x = uv.x * CANVAS_SIZE
     const y = (1 - uv.y) * CANVAS_SIZE
-    const radius =
+    const baseRadius =
       Math.max(10, brushSize * 1.2) *
       (tool === 'fine' ? 0.5 : tool === 'polish' ? 1.6 : 1)
-    const alpha = tool === 'polish' ? 0.22 : 0.9
+    const baseAlpha = tool === 'polish' ? 0.12 : tool === 'fine' ? 0.4 : 0.28
 
-    const stamp = (stampX: number, stampY: number) => {
-      const heightGradient = heightContext.createRadialGradient(
-        stampX,
-        stampY,
-        0,
-        stampX,
-        stampY,
-        radius,
-      )
-      heightGradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`)
-      heightGradient.addColorStop(
-        tool === 'polish' ? 0.35 : 0.62,
-        `rgba(255, 255, 255, ${alpha * 0.85})`,
-      )
-      heightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
-      heightContext.fillStyle = heightGradient
-      heightContext.beginPath()
-      heightContext.arc(stampX, stampY, radius, 0, Math.PI * 2)
-      heightContext.fill()
+    const stamp = (
+      stampX: number,
+      stampY: number,
+      dirX: number,
+      dirY: number,
+      pressure: number,
+    ) => {
+      const radius = baseRadius * (tool === 'polish' ? 1 : pressure)
+      const alpha = Math.min(1, baseAlpha * pressure)
+      const angle = Math.atan2(dirY, dirX)
 
+      heightContext.save()
+      heightContext.translate(stampX, stampY)
+      heightContext.rotate(angle)
+
+      if (tool === 'chisel') {
+        // 楔形 V 槽：沿刀口方向拉伸成刃，垂直方向线性渐变做出「中间深、两侧浅」的 V 形
+        const length = radius * 2.2
+        const width = radius * 0.5
+        const vGradient = heightContext.createLinearGradient(0, -width, 0, width)
+        vGradient.addColorStop(0, 'rgba(255, 255, 255, 0)')
+        vGradient.addColorStop(0.5, `rgba(255, 255, 255, ${alpha})`)
+        vGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+        heightContext.fillStyle = vGradient
+        heightContext.beginPath()
+        heightContext.ellipse(0, 0, length, width, 0, 0, Math.PI * 2)
+        heightContext.fill()
+      } else if (tool === 'fine') {
+        // 窄 U 槽：硬边、短刃
+        const length = radius * 1.5
+        const width = radius * 0.7
+        const uGradient = heightContext.createRadialGradient(
+          0,
+          0,
+          0,
+          0,
+          0,
+          width,
+        )
+        uGradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`)
+        uGradient.addColorStop(0.7, `rgba(255, 255, 255, ${alpha * 0.9})`)
+        uGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+        heightContext.fillStyle = uGradient
+        heightContext.beginPath()
+        heightContext.ellipse(0, 0, length, width, 0, 0, Math.PI * 2)
+        heightContext.fill()
+      } else {
+        // polish 软高斯柔化
+        const softGradient = heightContext.createRadialGradient(
+          0,
+          0,
+          0,
+          0,
+          0,
+          radius,
+        )
+        softGradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`)
+        softGradient.addColorStop(0.4, `rgba(255, 255, 255, ${alpha * 0.6})`)
+        softGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+        heightContext.fillStyle = softGradient
+        heightContext.beginPath()
+        heightContext.arc(0, 0, radius, 0, Math.PI * 2)
+        heightContext.fill()
+      }
+      heightContext.restore()
+
+      const colorAlpha = tool === 'polish' ? 0.12 : tool === 'fine' ? 0.32 : 0.42
+      const colorRadius = radius * 0.85
       const colorGradient = colorContext.createRadialGradient(
         stampX,
         stampY,
         0,
         stampX,
         stampY,
-        radius,
+        colorRadius,
       )
-      const colorAlpha = tool === 'polish' ? 0.04 : 0.1
-      colorGradient.addColorStop(0, `rgba(6, 14, 11, ${colorAlpha})`)
-      colorGradient.addColorStop(0.65, `rgba(6, 14, 11, ${colorAlpha * 0.55})`)
-      colorGradient.addColorStop(1, 'rgba(6, 14, 11, 0)')
+      colorGradient.addColorStop(0, `rgba(4, 11, 8, ${colorAlpha})`)
+      colorGradient.addColorStop(0.65, `rgba(4, 11, 8, ${colorAlpha * 0.55})`)
+      colorGradient.addColorStop(1, 'rgba(4, 11, 8, 0)')
       colorContext.fillStyle = colorGradient
       colorContext.beginPath()
-      colorContext.arc(stampX, stampY, radius, 0, Math.PI * 2)
+      colorContext.arc(stampX, stampY, colorRadius, 0, Math.PI * 2)
       colorContext.fill()
     }
 
@@ -268,16 +363,29 @@ function CarveSurface({
       const dx = x - lastX
       const dy = y - lastY
       const distance = Math.hypot(dx, dy)
+      const dirX = distance > 0 ? dx / distance : 1
+      const dirY = distance > 0 ? dy / distance : 0
+      // 速度压力：慢刀重、快刀轻
+      const pressure = Math.max(0.6, Math.min(1.15, 1.3 - distance / 40))
       const steps = Math.max(
         1,
-        Math.ceil(distance / Math.max(2, radius * 0.18)),
+        Math.ceil(distance / Math.max(2, baseRadius * 0.18)),
       )
       for (let step = 1; step <= steps; step += 1) {
         const progress = step / steps
-        stamp(lastX + dx * progress, lastY + dy * progress)
+        // 顿挫：刻刀/细刻走刀时沿垂直方向轻微摆动，模拟手工刀痕
+        const jitter =
+          tool === 'polish' ? 0 : (Math.random() - 0.5) * baseRadius * 0.3
+        stamp(
+          lastX + dx * progress - jitter * dirY,
+          lastY + dy * progress + jitter * dirX,
+          dirX,
+          dirY,
+          pressure,
+        )
       }
     } else {
-      stamp(x, y)
+      stamp(x, y, 1, 0, 1)
     }
 
     heightContext.restore()
@@ -294,6 +402,7 @@ function CarveSurface({
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0.21, 0]}
         receiveShadow
+        renderOrder={0}
         onPointerDown={(event) => {
           if (orbit) return
           event.stopPropagation()
@@ -323,14 +432,15 @@ function CarveSurface({
           roughnessMap={stoneTextures.roughnessMap}
           normalScale={stoneNormalScale}
           color="#ffffff"
-          roughness={0.55}
+          roughness={0.32}
           metalness={0.03}
-          clearcoat={0.2}
-          clearcoatRoughness={0.45}
+          clearcoat={0.4}
+          clearcoatRoughness={0.35}
           displacementMap={heightTexture}
-          displacementScale={-0.12}
-          bumpMap={heightTexture}
-          bumpScale={0.45}
+          displacementScale={-0.08}
+          emissive="#ffffff"
+          emissiveMap={guideTexture ?? undefined}
+          emissiveIntensity={showGuide ? 0.9 : 0}
         />
       </mesh>
 
@@ -338,53 +448,66 @@ function CarveSurface({
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0.211, 0]}
         raycast={() => {}}
+        renderOrder={1}
       >
         <planeGeometry args={[GUIDE_WIDTH, GUIDE_HEIGHT]} />
         <meshBasicMaterial
           map={colorTexture}
           transparent
           depthWrite={false}
-          side={THREE.DoubleSide}
+          side={THREE.FrontSide}
         />
       </mesh>
 
-      {guideTexture && (
+      {/* 砚身：圆角矩形砚边包裹雕刻面，中央留随形砚池凹坑 */}
+      <mesh
+        geometry={bodyGeometry}
+        position={[0, 0.2, 0]}
+        castShadow
+        receiveShadow
+      >
+        <meshPhysicalMaterial
+          map={greenStone}
+          normalMap={stoneTextures.normalMap}
+          roughnessMap={stoneTextures.roughnessMap}
+          normalScale={stoneNormalScale}
+          color="#ffffff"
+          roughness={0.32}
+          metalness={0.03}
+          clearcoat={0.4}
+          clearcoatRoughness={0.35}
+        />
+      </mesh>
+
+      {/* 砚池深色池片：沉在雕刻面下方，露出深色水窝 */}
+      {poolGeometries.map((pool, index) => (
         <mesh
+          key={index}
+          geometry={pool}
+          position={[0, 0.14, 0]}
           rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0.212, 0]}
-          raycast={() => {}}
+          receiveShadow
         >
-          <planeGeometry args={[GUIDE_WIDTH, GUIDE_HEIGHT]} />
-          <meshBasicMaterial
-            map={guideTexture}
-            transparent
-            depthWrite={false}
-            opacity={0.7}
+          <meshPhysicalMaterial
+            color="#1d2924"
+            roughness={0.55}
+            metalness={0.02}
             side={THREE.DoubleSide}
           />
         </mesh>
-      )}
+      ))}
 
-      <mesh position={[-1.37, 0, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.14, 0.4, 1.88]} />
-        <meshStandardMaterial color="#3f5a4c" roughness={0.62} />
-      </mesh>
-      <mesh position={[1.37, 0, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.14, 0.4, 1.88]} />
-        <meshStandardMaterial color="#3f5a4c" roughness={0.62} />
-      </mesh>
-      <mesh position={[0, 0, -0.87]} castShadow receiveShadow>
-        <boxGeometry args={[2.88, 0.4, 0.14]} />
-        <meshStandardMaterial color="#3f5a4c" roughness={0.62} />
-      </mesh>
-      <mesh position={[0, 0, 0.87]} castShadow receiveShadow>
-        <boxGeometry args={[2.88, 0.4, 0.14]} />
-        <meshStandardMaterial color="#3f5a4c" roughness={0.62} />
-      </mesh>
-      <mesh position={[0, -0.19, 0]} receiveShadow>
-        <boxGeometry args={[2.88, 0.04, 1.88]} />
+      {/* 木质底座 */}
+      <RoundedBox
+        args={[2.9, 0.12, 1.9]}
+        radius={0.06}
+        smoothness={4}
+        position={[0, -0.15, 0]}
+        castShadow
+        receiveShadow
+      >
         <meshStandardMaterial color="#2b1b12" roughness={0.72} />
-      </mesh>
+      </RoundedBox>
     </group>
   )
 }
@@ -394,18 +517,27 @@ export function Carve3D({
   brushSize,
   pattern,
   orbit,
+  patternScale,
+  showGuide,
+  onCaptureReady,
 }: {
   tool: CarveTool
   brushSize: number
   pattern: InkstonePattern
   orbit: boolean
+  patternScale: number
+  showGuide: boolean
+  onCaptureReady?: (capture: () => string | null) => void
 }) {
   return (
     <Canvas
       dpr={[1, 2]}
       shadows
       camera={{ position: [0, 2.6, 3.8], fov: 35 }}
-      gl={{ alpha: true, antialias: true }}
+      gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}
+      onCreated={(state) => {
+        onCaptureReady?.(() => state.gl.domElement.toDataURL('image/png'))
+      }}
     >
       <Suspense fallback={null}>
         <Environment
@@ -434,9 +566,11 @@ export function Carve3D({
         brushSize={brushSize}
         pattern={pattern}
         orbit={orbit}
+        patternScale={patternScale}
+        showGuide={showGuide}
       />
       <ContactShadows
-        position={[0, -0.22, 0]}
+        position={[0, -0.23, 0]}
         opacity={0.45}
         scale={6}
         blur={2.6}

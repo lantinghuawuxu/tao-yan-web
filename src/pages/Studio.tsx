@@ -1,10 +1,8 @@
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
   type ChangeEvent,
-  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { Carve3D } from '../components/Carve3D'
 import { InkstoneViewer } from '../components/InkstoneViewer'
@@ -13,11 +11,6 @@ import '../Studio.css'
 type Step = 1 | 2 | 3 | 4 | 5
 type Tool = 'chisel' | 'fine' | 'polish'
 type PatternId = 'lotus' | 'cloud' | 'wave' | 'meander'
-
-type Point = {
-  x: number
-  y: number
-}
 
 type Stone = {
   id: string
@@ -280,7 +273,6 @@ function Studio() {
   const [pattern, setPattern] = useState(patterns[0])
   const [patternScale, setPatternScale] = useState(1)
   const [previewMode, setPreviewMode] = useState<'stone' | 'inkstone'>('stone')
-  const [carveMode, setCarveMode] = useState<'2d' | '3d'>('2d')
   const [carve3DKey, setCarve3DKey] = useState(0)
   const [carve3DMode, setCarve3DMode] = useState<'carve' | 'orbit'>('carve')
   const [showGuide, setShowGuide] = useState(true)
@@ -290,12 +282,7 @@ function Studio() {
   const [finishedAt, setFinishedAt] = useState('')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const imageRef = useRef<HTMLImageElement | null>(null)
-  const drawingRef = useRef(false)
-  const lastPointRef = useRef<Point | null>(null)
-  const historyRef = useRef<ImageData[]>([])
-  const surfaceBackupRef = useRef<string | null>(null)
+  const captureRef = useRef<(() => string | null) | null>(null)
 
   const activeImage = customImage ?? stone.image
   const materialName = customImage ? (customLabel ?? '自定义石料') : stone.name
@@ -326,165 +313,6 @@ function Studio() {
     }
   }, [customImage])
 
-  useEffect(() => {
-    if (step !== 4) return
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    let cancelled = false
-    imageRef.current = null
-    const img = new Image()
-
-    img.onload = () => {
-      if (cancelled) return
-      imageRef.current = img
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = 1
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      historyRef.current = []
-      const backup = surfaceBackupRef.current
-      if (backup) {
-        const restored = new Image()
-        restored.onload = () => {
-          if (cancelled) return
-          ctx.clearRect(0, 0, canvas.width, canvas.height)
-          ctx.drawImage(restored, 0, 0, canvas.width, canvas.height)
-        }
-        restored.src = backup
-      } else {
-        drawCover(ctx, img)
-      }
-    }
-
-    img.src = activeImage
-
-    return () => {
-      cancelled = true
-    }
-  }, [step, activeImage])
-
-  const resetSurface = useCallback(() => {
-    const canvas = canvasRef.current
-    const img = imageRef.current
-    if (!canvas || !img) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.globalCompositeOperation = 'source-over'
-    ctx.globalAlpha = 1
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    drawCover(ctx, img)
-    historyRef.current = []
-  }, [])
-
-  const getPoint = (
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ): Point => {
-    const canvas = event.currentTarget
-    const rect = canvas.getBoundingClientRect()
-    return {
-      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
-      y: ((event.clientY - rect.top) / rect.height) * canvas.height,
-    }
-  }
-
-  const carveSegment = (a: Point, b: Point) => {
-    const canvas = canvasRef.current
-    const ctx = canvas?.getContext('2d')
-    if (!canvas || !ctx) return
-    const width =
-      tool === 'fine'
-        ? brushSize * 0.45
-        : tool === 'polish'
-          ? brushSize * 1.7
-          : brushSize
-
-    ctx.save()
-    ctx.globalCompositeOperation = 'destination-out'
-    ctx.globalAlpha = tool === 'polish' ? 0.24 : 1
-    ctx.strokeStyle = '#000'
-    ctx.fillStyle = '#000'
-    ctx.lineWidth = width
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.beginPath()
-    ctx.moveTo(a.x, a.y)
-    ctx.lineTo(b.x, b.y)
-    ctx.stroke()
-
-    const distance = Math.hypot(b.x - a.x, b.y - a.y)
-    const count = Math.max(
-      1,
-      Math.floor(distance / Math.max(5, width * 0.35)),
-    )
-    for (let i = 0; i <= count; i += 1) {
-      const t = count === 0 ? 0 : i / count
-      const x =
-        a.x + (b.x - a.x) * t + (Math.random() - 0.5) * width * 0.2
-      const y =
-        a.y + (b.y - a.y) * t + (Math.random() - 0.5) * width * 0.2
-      ctx.beginPath()
-      ctx.arc(
-        x,
-        y,
-        width * (0.3 + Math.random() * 0.12),
-        0,
-        Math.PI * 2,
-      )
-      ctx.fill()
-    }
-    ctx.restore()
-  }
-
-  const startStroke = (
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ) => {
-    const canvas = canvasRef.current
-    const ctx = canvas?.getContext('2d')
-    if (!canvas || !ctx || !imageRef.current) return
-    event.preventDefault()
-    canvas.setPointerCapture(event.pointerId)
-    if (historyRef.current.length > 18) historyRef.current.shift()
-    historyRef.current.push(
-      ctx.getImageData(0, 0, canvas.width, canvas.height),
-    )
-    drawingRef.current = true
-    const point = getPoint(event)
-    lastPointRef.current = point
-    carveSegment(point, point)
-  }
-
-  const moveStroke = (
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ) => {
-    if (!drawingRef.current) return
-    event.preventDefault()
-    const point = getPoint(event)
-    if (lastPointRef.current) {
-      carveSegment(lastPointRef.current, point)
-    }
-    lastPointRef.current = point
-  }
-
-  const endStroke = (
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ) => {
-    if (!drawingRef.current) return
-    drawingRef.current = false
-    lastPointRef.current = null
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-  }
-
-  const undo = () => {
-    const canvas = canvasRef.current
-    const ctx = canvas?.getContext('2d')
-    const snapshot = historyRef.current.pop()
-    if (!canvas || !ctx || !snapshot) return
-    ctx.putImageData(snapshot, 0, 0)
-  }
-
   const selectStone = (next: Stone) => {
     const changed = next.id !== stone.id || customImage !== null
     setStone(next)
@@ -494,9 +322,6 @@ function Studio() {
       setScanned(false)
       setArtwork(null)
       setMaxStep(1)
-      surfaceBackupRef.current = null
-      historyRef.current = []
-      imageRef.current = null
     }
   }
 
@@ -510,27 +335,16 @@ function Studio() {
     setScanned(false)
     setArtwork(null)
     setMaxStep(2)
-    surfaceBackupRef.current = null
-    historyRef.current = []
-    imageRef.current = null
     if (step === 1) setStep(2)
   }
 
   const goTo = (target: Step) => {
     if (target === step || target > maxStep) return
-    if (step === 4 && canvasRef.current) {
-      surfaceBackupRef.current =
-        canvasRef.current.toDataURL('image/png')
-    }
     setStep(target)
   }
 
   const goBack = () => {
     if (step === 1) return
-    if (step === 4 && canvasRef.current) {
-      surfaceBackupRef.current =
-        canvasRef.current.toDataURL('image/png')
-    }
     setStep((step - 1) as Step)
   }
 
@@ -551,54 +365,55 @@ function Studio() {
   }
 
   const finish = () => {
-    const canvas = canvasRef.current
-    const img = imageRef.current
-    if (!canvas || !img) return
-    const out = document.createElement('canvas')
-    out.width = 1200
-    out.height = 800
-    const ctx = out.getContext('2d')
-    if (!ctx) return
+    const screenshot = captureRef.current?.()
+    if (!screenshot) return
+    const img = new Image()
+    img.onload = () => {
+      const out = document.createElement('canvas')
+      out.width = 1200
+      out.height = 800
+      const ctx = out.getContext('2d')
+      if (!ctx) return
 
-    drawCover(ctx, img)
-    ctx.fillStyle = 'rgba(7, 18, 15, 0.5)'
-    ctx.fillRect(0, 0, out.width, out.height)
-    ctx.drawImage(canvas, 0, 0)
+      ctx.fillStyle = '#0b1512'
+      ctx.fillRect(0, 0, out.width, out.height)
+      drawCover(ctx, img)
 
-    const vignette = ctx.createLinearGradient(0, 0, 0, out.height)
-    vignette.addColorStop(0, 'rgba(8, 20, 17, 0.18)')
-    vignette.addColorStop(0.5, 'rgba(8, 20, 17, 0)')
-    vignette.addColorStop(1, 'rgba(8, 20, 17, 0.82)')
-    ctx.fillStyle = vignette
-    ctx.fillRect(0, 0, out.width, out.height)
+      const vignette = ctx.createLinearGradient(0, 0, 0, out.height)
+      vignette.addColorStop(0, 'rgba(8, 20, 17, 0.18)')
+      vignette.addColorStop(0.5, 'rgba(8, 20, 17, 0)')
+      vignette.addColorStop(1, 'rgba(8, 20, 17, 0.82)')
+      ctx.fillStyle = vignette
+      ctx.fillRect(0, 0, out.width, out.height)
 
-    ctx.fillStyle = 'rgba(13, 29, 25, 0.9)'
-    ctx.fillRect(0, out.height - 108, out.width, 108)
-    ctx.fillStyle = '#f5f1e6'
-    ctx.font = '32px KaiTi, STKaiti, serif'
-    ctx.fillText('陇上砚语 · 我的数字洮砚', 48, out.height - 54)
-    const dateLabel = new Date().toLocaleDateString('zh-CN')
-    ctx.fillStyle = '#c7a86b'
-    ctx.font = '16px "Microsoft YaHei", sans-serif'
-    ctx.fillText(
-      `${materialName} · ${pattern.name} · ${dateLabel}`,
-      48,
-      out.height - 26,
-    )
+      ctx.fillStyle = 'rgba(13, 29, 25, 0.9)'
+      ctx.fillRect(0, out.height - 108, out.width, 108)
+      ctx.fillStyle = '#f5f1e6'
+      ctx.font = '32px KaiTi, STKaiti, serif'
+      ctx.fillText('陇上砚语 · 我的数字洮砚', 48, out.height - 54)
+      const dateLabel = new Date().toLocaleDateString('zh-CN')
+      ctx.fillStyle = '#c7a86b'
+      ctx.font = '16px "Microsoft YaHei", sans-serif'
+      ctx.fillText(
+        `${materialName} · ${pattern.name} · ${dateLabel}`,
+        48,
+        out.height - 26,
+      )
 
-    ctx.fillStyle = '#a8402f'
-    ctx.fillRect(out.width - 124, out.height - 84, 64, 64)
-    ctx.fillStyle = '#f5f1e6'
-    ctx.font = '36px KaiTi, STKaiti, serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('砚', out.width - 92, out.height - 38)
-    ctx.textAlign = 'start'
+      ctx.fillStyle = '#a8402f'
+      ctx.fillRect(out.width - 124, out.height - 84, 64, 64)
+      ctx.fillStyle = '#f5f1e6'
+      ctx.font = '36px KaiTi, STKaiti, serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('砚', out.width - 92, out.height - 38)
+      ctx.textAlign = 'start'
 
-    surfaceBackupRef.current = canvas.toDataURL('image/png')
-    setArtwork(out.toDataURL('image/png'))
-    setFinishedAt(dateLabel)
-    setMaxStep(5)
-    setStep(5)
+      setArtwork(out.toDataURL('image/png'))
+      setFinishedAt(dateLabel)
+      setMaxStep(5)
+      setStep(5)
+    }
+    img.src = screenshot
   }
 
   const resetAll = () => {
@@ -615,9 +430,6 @@ function Studio() {
     setTool('chisel')
     setBrushSize(28)
     setArtwork(null)
-    surfaceBackupRef.current = null
-    historyRef.current = []
-    imageRef.current = null
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -1036,23 +848,6 @@ function Studio() {
             {step === 4 && (
               <div className="carve-layout">
                 <div className="carve-main">
-                  <div className="carve-mode-switch" aria-label="雕刻模式">
-                    <button
-                      type="button"
-                      className={carveMode === '2d' ? 'active' : ''}
-                      onClick={() => setCarveMode('2d')}
-                    >
-                      2D 刻痕
-                    </button>
-                    <button
-                      type="button"
-                      className={carveMode === '3d' ? 'active' : ''}
-                      onClick={() => setCarveMode('3d')}
-                    >
-                      3D 雕刻
-                    </button>
-                  </div>
-
                   <div className="carve-toolbar">
                     <div className="tool-group">
                       {tools.map((item) => (
@@ -1086,68 +881,26 @@ function Studio() {
                     </div>
 
                     <div className="tool-actions">
-                      {carveMode === '2d' ? (
-                        <>
-                          <button type="button" onClick={undo}>
-                            撤销
-                          </button>
-                          <button type="button" onClick={resetSurface}>
-                            清除
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setCarve3DKey((key) => key + 1)}
-                        >
-                          重置 3D 刻面
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setCarve3DKey((key) => key + 1)}
+                      >
+                        重置 3D 刻面
+                      </button>
                     </div>
                   </div>
 
-                  <div
-                    className={`carve-stage ${
-                      carveMode === '3d' ? 'is-hidden' : ''
-                    }`}
-                  >
-                    <img
-                      className="carve-base"
-                      src={activeImage}
-                      alt=""
-                      aria-hidden="true"
-                    />
-                    <canvas
-                      ref={canvasRef}
-                      width={1200}
-                      height={800}
-                      className="carve-surface"
-                      aria-label="虚拟雕刻画布：按住鼠标或手指拖动进行雕刻"
-                      onPointerDown={startStroke}
-                      onPointerMove={moveStroke}
-                      onPointerUp={endStroke}
-                      onPointerCancel={endStroke}
-                    />
-                    <div
-                      className={`pattern-overlay carve-guide ${
-                        showGuide ? '' : 'hidden'
-                      }`}
-                      style={{ transform: `scale(${patternScale})` }}
-                    >
-                      <PatternArt id={pattern.id} />
-                    </div>
-                    <span className="carve-hint">
-                      按住鼠标 / 手指，在石面上拖动雕刻
-                    </span>
-                  </div>
-
-                  {carveMode === '3d' && (
-                    <div className="carve-3d-stage" key={carve3DKey}>
+                  <div className="carve-3d-stage" key={carve3DKey}>
                       <Carve3D
                         tool={tool}
                         brushSize={brushSize}
                         pattern={pattern.id}
                         orbit={carve3DMode === 'orbit'}
+                        patternScale={patternScale}
+                        showGuide={showGuide}
+                        onCaptureReady={(capture) => {
+                          captureRef.current = capture
+                        }}
                       />
                       <div className="carve-3d-modes" aria-label="3D 视角">
                         <button
@@ -1171,7 +924,6 @@ function Studio() {
                           : '按住拖动，在石面上刻出真实 3D 凹槽'}
                       </span>
                     </div>
-                  )}
 
                   <div className="carve-footer">
                     <span>
@@ -1185,19 +937,13 @@ function Studio() {
                       >
                         上一步
                       </button>
-                      {carveMode === '2d' ? (
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          onClick={finish}
-                        >
-                          完成作品
-                        </button>
-                      ) : (
-                        <span className="step-note">
-                          3D 刻面为交互预览，切回 2D 完成作品
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={finish}
+                      >
+                        完成作品
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1229,9 +975,7 @@ function Studio() {
                   <div className="side-card side-note">
                     <span>关于虚拟雕刻</span>
                     <p>
-                      {carveMode === '3d'
-                        ? '3D 刻面通过高度位移生成真实凹槽；完成作品请切回 2D。'
-                        : '本 Demo 用数字方式模拟刻痕。真实洮砚雕刻需要匠人根据石料纹理手工完成。'}
+                      3D 刻面通过高度位移生成真实凹槽；真实洮砚雕刻需要匠人根据石料纹理手工完成。
                     </p>
                   </div>
                 </aside>

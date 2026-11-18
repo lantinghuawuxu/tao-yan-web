@@ -19,14 +19,14 @@ export function useGreenStoneTexture(repeat = 1.4) {
     if (!context) return null
 
     const random = seededRandom(20261103)
-    context.fillStyle = '#5b7a69'
+    context.fillStyle = '#477c68'
     context.fillRect(0, 0, size, size)
 
     for (let i = 0; i < 80; i += 1) {
       const light = random() > 0.55
       context.strokeStyle = light
-        ? `rgba(154, 180, 164, ${0.06 + random() * 0.12})`
-        : `rgba(45, 67, 56, ${0.05 + random() * 0.12})`
+        ? `rgba(158, 196, 178, ${0.06 + random() * 0.12})`
+        : `rgba(36, 64, 54, ${0.05 + random() * 0.12})`
       context.lineWidth = 1 + random() * 7
       context.lineCap = 'round'
       context.beginPath()
@@ -56,8 +56,8 @@ export function useGreenStoneTexture(repeat = 1.4) {
         centerY,
         radius,
       )
-      gradient.addColorStop(0, `rgba(30, 48, 40, ${0.03 + random() * 0.06})`)
-      gradient.addColorStop(1, 'rgba(30, 48, 40, 0)')
+      gradient.addColorStop(0, `rgba(28, 52, 43, ${0.03 + random() * 0.06})`)
+      gradient.addColorStop(1, 'rgba(28, 52, 43, 0)')
       context.fillStyle = gradient
       context.beginPath()
       context.arc(centerX, centerY, radius, 0, Math.PI * 2)
