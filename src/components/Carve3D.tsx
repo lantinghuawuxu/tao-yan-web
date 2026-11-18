@@ -8,7 +8,8 @@ import {
 } from '@react-three/drei'
 import * as THREE from 'three'
 import {
-  createCarveBody,
+  createRawStoneCarvePlane,
+  createRawStoneRim,
   createShape,
   type InkstoneShape,
   type InkstonePattern,
@@ -17,7 +18,6 @@ import {
   useGreenStoneTexture,
   type StoneVariant,
 } from './useGreenStoneTexture'
-import { useRockTextures } from './useRockTextures'
 
 type CarveTool = 'chisel' | 'fine' | 'polish'
 
@@ -469,8 +469,8 @@ function CarveSurface({
   }, [normalCanvas])
 
   const geometry = useMemo(
-    () => new THREE.PlaneGeometry(GUIDE_WIDTH, GUIDE_HEIGHT, 240, 180),
-    [],
+    () => createRawStoneCarvePlane(stone, GUIDE_WIDTH, GUIDE_HEIGHT, 240, 180),
+    [stone],
   )
 
   const poolGeometries = useMemo(
@@ -478,14 +478,10 @@ function CarveSurface({
     [stone],
   )
 
-  const bodyGeometry = useMemo(
-    () => createCarveBody(GUIDE_WIDTH, GUIDE_HEIGHT),
-    [],
-  )
+  const bodyGeometry = useMemo(() => createRawStoneRim(stone), [stone])
 
-  const stoneTextures = useRockTextures(2.2)
-  const greenStone = useGreenStoneTexture(stone, 2)
-  const stoneNormalScale = useMemo(() => new THREE.Vector2(0.12, 0.12), [])
+  const stonePBR = useGreenStoneTexture(stone, 2)
+  const stoneNormalScale = useMemo(() => new THREE.Vector2(0.7, 0.7), [])
   const carveNormalScale = useMemo(() => new THREE.Vector2(1.1, 1.1), [])
 
   const heightTextureRef = useRef(heightTexture)
@@ -702,15 +698,15 @@ function CarveSurface({
         }}
       >
         <meshPhysicalMaterial
-          map={greenStone}
+          map={stonePBR.map}
           normalMap={normalTexture}
-          roughnessMap={stoneTextures.roughnessMap}
+          roughnessMap={stonePBR.roughnessMap}
           normalScale={carveNormalScale}
           color="#ffffff"
-          roughness={0.32}
-          metalness={0.03}
-          clearcoat={0.4}
-          clearcoatRoughness={0.35}
+          roughness={0.42}
+          metalness={0.02}
+          clearcoat={0.28}
+          clearcoatRoughness={0.4}
           displacementMap={heightTexture}
           displacementScale={-0.2}
           emissive="#ffffff"
@@ -743,9 +739,9 @@ function CarveSurface({
         receiveShadow
       >
         <meshPhysicalMaterial
-          map={greenStone}
-          normalMap={stoneTextures.normalMap}
-          roughnessMap={stoneTextures.roughnessMap}
+          map={stonePBR.map}
+          normalMap={stonePBR.normalMap}
+          roughnessMap={stonePBR.roughnessMap}
           normalScale={stoneNormalScale}
           color="#ffffff"
           roughness={0.32}

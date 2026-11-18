@@ -342,6 +342,109 @@ export function createCarveBody(planeWidth: number, planeHeight: number) {
   return body
 }
 
+// —— 原石随形几何：每块洮河石都有天然不规则的随形外缘（相石而作）——
+export type RawStone = 'green' | 'yellow' | 'purple'
+
+// 射线法点命中判断（不依赖 Shape.containsPoint，凹/凸多边形都可靠）
+function pointInShape(shape: THREE.Shape, x: number, y: number) {
+  const points = shape.getPoints(96)
+  let inside = false
+  for (let i = 0, j = points.length - 1; i < points.length; j = i += 1) {
+    const xi = points[i].x
+    const yi = points[i].y
+    const xj = points[j].x
+    const yj = points[j].y
+    const hit =
+      (yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
+    if (hit) inside = !inside
+  }
+  return inside
+}
+
+function scaleShape(shape: THREE.Shape, scale: number) {
+  return new THREE.Shape(
+    shape.getPoints(96).map((point) => point.clone().multiplyScalar(scale)),
+  )
+}
+
+// 原石轮廓：三种石料三套不同扰动（主频/次频/相位），包围盒约 2.6×1.6
+export function createRawStoneShape(stone: RawStone) {
+  const params: Record<
+    RawStone,
+    { a: number; b: number; c: number; p1: number; p2: number; p3: number }
+  > = {
+    green: { a: 0.1, b: 0.06, c: 0.03, p1: 0.9, p2: -0.5, p3: 0.2 },
+    yellow: { a: 0.05, b: 0.1, c: 0.04, p1: 2.2, p2: 1.1, p3: -0.7 },
+    purple: { a: 0.12, b: 0.04, c: 0.06, p1: -0.4, p2: 0.3, p3: 2.4 },
+  }
+  const s = params[stone]
+  const maxAmp = 1 + s.a + s.b + s.c
+  const scaleX = 1.3 / maxAmp
+  const scaleY = 0.8 / maxAmp
+  const segments = 96
+  const points: THREE.Vector2[] = []
+  for (let i = 0; i < segments; i += 1) {
+    const angle = (i / segments) * Math.PI * 2
+    const radius =
+      1 +
+      Math.sin(angle * 3 + s.p1) * s.a +
+      Math.cos(angle * 5 + s.p2) * s.b +
+      Math.sin(angle * 7 + s.p3) * s.c
+    points.push(
+      new THREE.Vector2(
+        Math.cos(angle) * radius * scaleX,
+        Math.sin(angle) * radius * scaleY,
+      ),
+    )
+  }
+  return new THREE.Shape(points)
+}
+
+// 原石石沿（边框）：外缘=原石放大，内缘开口=原石缩小，中央露出可雕刻的磨平面
+export function createRawStoneRim(stone: RawStone) {
+  const raw = createRawStoneShape(stone)
+  const outer = scaleShape(raw, 1.06)
+  const opening = scaleShape(raw, 0.93)
+  outer.holes = [new THREE.Path(opening.getPoints(96).reverse())]
+
+  const body = new THREE.ExtrudeGeometry(outer, {
+    depth: THICKNESS,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    bevelSize: 0.05,
+    bevelThickness: 0.035,
+    curveSegments: 48,
+  })
+  body.rotateX(-Math.PI / 2)
+  body.translate(0, -THICKNESS, 0)
+  body.computeVertexNormals()
+  return body
+}
+
+// 雕刻面：高细分矩形，原石轮廓外的顶点压到砚身之下（藏进石沿），形成天然随形外缘
+export function createRawStoneCarvePlane(
+  stone: RawStone,
+  width: number,
+  height: number,
+  segX: number,
+  segY: number,
+) {
+  const raw = createRawStoneShape(stone)
+  const geometry = new THREE.PlaneGeometry(width, height, segX, segY)
+  const position = geometry.attributes.position as THREE.BufferAttribute
+  for (let i = 0; i < position.count; i += 1) {
+    const x = position.getX(i)
+    const yPlane = position.getY(i)
+    // 铺平后世界 XZ 坐标 = (x, -yPlane)
+    if (!pointInShape(raw, x, -yPlane)) {
+      // rotateX(-PI/2) 后世界高度 = 顶点 z 坐标，压到 -0.7 藏进石沿之下
+      position.setZ(i, -0.7)
+    }
+  }
+  position.needsUpdate = true
+  return geometry
+}
+
 // 完整砚身：createRimBody 再减纹样刻槽
 export function createGroovedBody(
   shape: InkstoneShape,

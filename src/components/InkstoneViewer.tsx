@@ -15,7 +15,6 @@ import {
   type InkstonePattern,
 } from './inkstoneGeometry'
 import { useGreenStoneTexture } from './useGreenStoneTexture'
-import { useRockTextures } from './useRockTextures'
 
 export type { InkstoneShape, InkstonePattern }
 
@@ -26,9 +25,8 @@ function InkstoneModel({
   shape: InkstoneShape
   pattern: InkstonePattern
 }) {
-  const stoneTextures = useRockTextures(1.2)
-  const greenStone = useGreenStoneTexture('green', 1.2)
-  const normalScale = useMemo(() => new THREE.Vector2(0.15, 0.15), [])
+  const stonePBR = useGreenStoneTexture('green', 1.2)
+  const normalScale = useMemo(() => new THREE.Vector2(0.6, 0.6), [])
   const model = useMemo(() => {
     const body = createGroovedBody(shape, pattern)
     const parts = createShape(shape)
@@ -49,9 +47,9 @@ function InkstoneModel({
     <group position={[0, 0.05, 0]} rotation={[0.12, -0.4, 0.02]}>
       <mesh geometry={model.body} castShadow receiveShadow>
         <meshPhysicalMaterial
-          map={greenStone}
-          normalMap={stoneTextures.normalMap}
-          roughnessMap={stoneTextures.roughnessMap}
+          map={stonePBR.map}
+          normalMap={stonePBR.normalMap}
+          roughnessMap={stonePBR.roughnessMap}
           normalScale={normalScale}
           color="#ffffff"
           roughness={0.32}
