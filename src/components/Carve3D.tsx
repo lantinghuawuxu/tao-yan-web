@@ -24,12 +24,23 @@ type CarveTool = 'chisel' | 'fine' | 'polish'
 const CANVAS_SIZE = 1024
 const GUIDE_WIDTH = 2.6
 const GUIDE_HEIGHT = 1.6
-// 纹样 → 砚池器型映射：不同题材配不同形状的砚池（真实洮砚「因题材定池」）
-const PATTERN_SHAPE: Record<InkstonePattern, InkstoneShape> = {
-  lotus: '圆形',
-  cloud: '椭圆',
-  wave: '随形',
-  meander: '长方',
+// 原石 → 砚池器型映射：真实洮砚「相石而作」，因石定形（石料决定砚池形状）
+const STONE_SHAPE: Record<StoneVariant, InkstoneShape> = {
+  green: '圆形',
+  yellow: '长方',
+  purple: '随形',
+}
+
+// 砚池缩放：createShape 的砚池尺寸为完整砚台设计，缩放到 2.6×1.6 雕刻面内
+const POOL_SCALE = 0.68
+
+function getCarvePools(stone: StoneVariant) {
+  return createShape(STONE_SHAPE[stone]).pools.map((pool) => {
+    const points = pool
+      .getPoints(64)
+      .map((point) => point.clone().multiplyScalar(POOL_SCALE))
+    return new THREE.Shape(points)
+  })
 }
 
 function roundedRectPath(
@@ -146,6 +157,215 @@ function createGuideTexture(pattern: InkstonePattern, patternScale = 1) {
   return texture
 }
 
+// 雕刻露出的「深层石色」——真实雕刻是削去表层、露出内部更深更润的石色
+const CARVE_REVEAL: Record<StoneVariant, string> = {
+  green: 'rgba(20, 44, 37, ',
+  yellow: 'rgba(46, 56, 34, ',
+  purple: 'rgba(56, 36, 52, ',
+}
+
+// 在砚池周围生成纹样浮雕（高度图语义：白=凹、黑=凸，已 setTransform 到世界坐标）
+function drawPatternRelief(
+  context: CanvasRenderingContext2D,
+  pattern: InkstonePattern,
+  pools: THREE.Shape[],
+  stone: StoneVariant,
+) {
+  const pool = pools[0]
+  const points = pool.getPoints(64)
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const point of points) {
+    minX = Math.min(minX, point.x)
+    maxX = Math.max(maxX, point.x)
+    minY = Math.min(minY, point.y)
+    maxY = Math.max(maxY, point.y)
+  }
+  const rx = (maxX - minX) / 2
+  const ry = (maxY - minY) / 2
+
+  context.lineJoin = 'round'
+  context.lineCap = 'round'
+
+  // 石膘凸起：黄膘 / 紫石在浮雕带外散布天然石膘斑块（凸起，不雕）
+  if (stone === 'yellow' || stone === 'purple') {
+    context.fillStyle = '#000000'
+    for (let i = 0; i < 5; i += 1) {
+      const angle = (i / 5) * Math.PI * 2 + 0.7
+      const cx = Math.cos(angle) * (rx * 1.9 + rx * 0.5)
+      const cy = Math.sin(angle) * (ry * 1.9 + ry * 0.5)
+      context.beginPath()
+      context.ellipse(cx, cy, rx * 0.3, ry * 0.24, angle, 0, Math.PI * 2)
+      context.fill()
+    }
+  }
+
+  if (pattern === 'lotus') {
+    // 莲纹：8 片大花瓣（凸起）绕砚池，白勾边 + 中脊线
+    const petals = 8
+    for (let i = 0; i < petals; i += 1) {
+      const angle = (i / petals) * Math.PI * 2 + Math.PI / petals
+      const cx = Math.cos(angle) * rx * 1.45
+      const cy = Math.sin(angle) * ry * 1.45
+      context.save()
+      context.translate(cx, cy)
+      context.rotate(angle + Math.PI / 2)
+      context.beginPath()
+      context.ellipse(0, 0, rx * 0.32, ry * 0.28, 0, 0, Math.PI * 2)
+      context.fillStyle = '#000000'
+      context.fill()
+      context.lineWidth = 0.02
+      context.strokeStyle = '#ffffff'
+      context.stroke()
+      // 花瓣中脊线（阴刻，增强莲瓣立体感）
+      context.beginPath()
+      context.moveTo(0, -ry * 0.28)
+      context.lineTo(0, ry * 0.28)
+      context.lineWidth = 0.014
+      context.stroke()
+      context.restore()
+    }
+    // 外圈刻线（花瓣外缘）
+    context.beginPath()
+    context.ellipse(0, 0, rx * 1.72, ry * 1.72, 0, 0, Math.PI * 2)
+    context.lineWidth = 0.02
+    context.strokeStyle = '#ffffff'
+    context.stroke()
+  } else if (pattern === 'cloud') {
+    // 云纹：一圈卷云（如意云头，凸起）+ 白勾边
+    const count = 10
+    for (let i = 0; i < count; i += 1) {
+      const angle = (i / count) * Math.PI * 2
+      const cx = Math.cos(angle) * rx * 1.45
+      const cy = Math.sin(angle) * ry * 1.45
+      context.save()
+      context.translate(cx, cy)
+      context.rotate(angle + Math.PI / 2)
+      context.beginPath()
+      context.arc(0, 0, ry * 0.46, -Math.PI * 0.55, Math.PI * 0.55)
+      context.arc(0, -ry * 0.16, ry * 0.3, Math.PI * 0.6, -Math.PI * 0.6, true)
+      context.closePath()
+      context.fillStyle = '#000000'
+      context.fill()
+      context.lineWidth = 0.02
+      context.strokeStyle = '#ffffff'
+      context.stroke()
+      context.restore()
+    }
+  } else if (pattern === 'wave') {
+    // 水波：黑色凸起环 + 白色刻线环交替（起伏的涟漪）
+    for (let ring = 0; ring < 3; ring += 1) {
+      const scale = 1.24 + ring * 0.26
+      const ringPoints = pool.getPoints(72)
+      // 黑色凸起环（粗）
+      context.beginPath()
+      ringPoints.forEach((point, index) => {
+        const x = point.x * scale
+        const y = point.y * scale
+        if (index === 0) context.moveTo(x, y)
+        else context.lineTo(x, y)
+      })
+      context.closePath()
+      context.lineWidth = 0.11
+      context.strokeStyle = '#000000'
+      context.stroke()
+      // 白色刻线环（细，叠在凸起环外缘）
+      context.beginPath()
+      ringPoints.forEach((point, index) => {
+        const x = point.x * (scale + 0.07)
+        const y = point.y * (scale + 0.07)
+        if (index === 0) context.moveTo(x, y)
+        else context.lineTo(x, y)
+      })
+      context.closePath()
+      context.lineWidth = 0.03
+      context.strokeStyle = '#ffffff'
+      context.stroke()
+    }
+  } else {
+    // 回纹：凸起方框带 + 白色内框刻线（「回」字嵌套）
+    const outerW = Math.max(rx * 1.6, 0.74)
+    const outerH = Math.max(ry * 1.6, 0.48)
+    const innerW = Math.max(rx * 1.1, 0.5)
+    const innerH = Math.max(ry * 1.1, 0.28)
+    // 凸起方框带（黑，evenodd 挖空内部）
+    context.fillStyle = '#000000'
+    context.beginPath()
+    context.rect(-outerW, -outerH, outerW * 2, outerH * 2)
+    context.moveTo(-innerW, innerH)
+    context.lineTo(-innerW, -innerH)
+    context.lineTo(innerW, -innerH)
+    context.lineTo(innerW, innerH)
+    context.lineTo(-innerW, innerH)
+    context.closePath()
+    context.fill('evenodd')
+    // 白色内框刻线（「回」字内圈，阴刻）
+    const midW = (innerW + outerW) / 2
+    const midH = (innerH + outerH) / 2
+    context.beginPath()
+    context.rect(-midW, -midH, midW * 2, midH * 2)
+    context.lineWidth = 0.026
+    context.strokeStyle = '#ffffff'
+    context.stroke()
+  }
+}
+
+// 从高度图实时重算法线（让凹槽有正确立体光影，这是「雕刻」与「涂鸦」的关键区别）
+function updateNormalMap(
+  heightCanvas: HTMLCanvasElement,
+  normalCanvas: HTMLCanvasElement,
+  strength = 2.2,
+) {
+  const heightContext = heightCanvas.getContext('2d')
+  const normalContext = normalCanvas.getContext('2d')
+  if (!heightContext || !normalContext) return
+
+  const sw = heightCanvas.width
+  const sh = heightCanvas.height
+  const dw = normalCanvas.width
+  const dh = normalCanvas.height
+  const source = heightContext.getImageData(0, 0, sw, sh)
+  const gray = new Float32Array(sw * sh)
+  for (let i = 0; i < sw * sh; i += 1) {
+    gray[i] = source.data[i * 4] / 255
+  }
+  const target = normalContext.createImageData(dw, dh)
+
+  for (let y = 0; y < dh; y += 1) {
+    for (let x = 0; x < dw; x += 1) {
+      const sx = Math.floor((x / dw) * sw)
+      const sy = Math.floor((y / dh) * sh)
+      const x0 = Math.max(0, sx - 1)
+      const x1 = Math.min(sw - 1, sx + 1)
+      const y0 = Math.max(0, sy - 1)
+      const y1 = Math.min(sh - 1, sy + 1)
+      const gx =
+        gray[y0 * sw + x0] -
+        gray[y0 * sw + x1] +
+        2 * (gray[sy * sw + x0] - gray[sy * sw + x1]) +
+        gray[y1 * sw + x0] -
+        gray[y1 * sw + x1]
+      const gy =
+        gray[y0 * sw + x0] -
+        gray[y1 * sw + x0] +
+        2 * (gray[y0 * sw + sx] - gray[y1 * sw + sx]) +
+        gray[y0 * sw + x1] -
+        gray[y1 * sw + x1]
+      const nx = -gx * strength
+      const ny = -gy * strength
+      const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1)
+      const index = (y * dw + x) * 4
+      target.data[index] = Math.round((nx * inv * 0.5 + 0.5) * 255)
+      target.data[index + 1] = Math.round((ny * inv * 0.5 + 0.5) * 255)
+      target.data[index + 2] = Math.round((inv * 0.5 + 0.5) * 255)
+      target.data[index + 3] = 255
+    }
+  }
+  normalContext.putImageData(target, 0, 0)
+}
+
 function CarveSurface({
   tool,
   brushSize,
@@ -169,28 +389,38 @@ function CarveSurface({
     canvas.height = CANVAS_SIZE
     const context = canvas.getContext('2d')
     if (context) {
-      context.fillStyle = '#000'
+      // 基底中灰：让纹样浮雕与砚池有起伏空间
+      context.fillStyle = '#4f4f4f'
       context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
-      // 预置砚池凹陷：让雕刻面在砚池位置下沉，露出下方深色砚池片
-      const { pools } = createShape(PATTERN_SHAPE[pattern])
-      context.fillStyle = 'rgba(255, 255, 255, 1)'
+      // 世界坐标变换（Y 反向，与池片 ShapeGeometry 朝向一致）
+      const scaleX = CANVAS_SIZE / GUIDE_WIDTH
+      const scaleY = CANVAS_SIZE / GUIDE_HEIGHT
+      context.setTransform(
+        scaleX,
+        0,
+        0,
+        -scaleY,
+        CANVAS_SIZE / 2,
+        CANVAS_SIZE / 2,
+      )
+      const pools = getCarvePools(stone)
+      // 砚池深坑（白=凹）
+      context.fillStyle = '#ffffff'
       for (const pool of pools) {
         const points = pool.getPoints(64)
         context.beginPath()
         points.forEach((point, index) => {
-          const px = ((point.x + GUIDE_WIDTH / 2) / GUIDE_WIDTH) * CANVAS_SIZE
-          // 注意 Y 反向：shape 的 +Y 经 rotateX(-90°) 映射到世界 -Z，
-          // 与池片 ShapeGeometry 的朝向保持一致
-          const py = ((GUIDE_HEIGHT / 2 - point.y) / GUIDE_HEIGHT) * CANVAS_SIZE
-          if (index === 0) context.moveTo(px, py)
-          else context.lineTo(px, py)
+          if (index === 0) context.moveTo(point.x, point.y)
+          else context.lineTo(point.x, point.y)
         })
         context.closePath()
         context.fill()
       }
+      // 纹样浮雕
+      drawPatternRelief(context, pattern, pools, stone)
     }
     return canvas
-  }, [pattern])
+  }, [pattern, stone])
 
   const colorCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -222,17 +452,30 @@ function CarveSurface({
     [pattern, patternScale],
   )
 
+  const normalCanvas = useMemo(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 512
+    canvas.height = 512
+    return canvas
+  }, [])
+
+  const normalTexture = useMemo(() => {
+    const texture = new THREE.CanvasTexture(normalCanvas)
+    texture.wrapS = THREE.ClampToEdgeWrapping
+    texture.wrapT = THREE.ClampToEdgeWrapping
+    texture.colorSpace = THREE.NoColorSpace
+    texture.needsUpdate = true
+    return texture
+  }, [normalCanvas])
+
   const geometry = useMemo(
     () => new THREE.PlaneGeometry(GUIDE_WIDTH, GUIDE_HEIGHT, 240, 180),
     [],
   )
 
   const poolGeometries = useMemo(
-    () =>
-      createShape(PATTERN_SHAPE[pattern]).pools.map(
-        (pool) => new THREE.ShapeGeometry(pool),
-      ),
-    [pattern],
+    () => getCarvePools(stone).map((pool) => new THREE.ShapeGeometry(pool)),
+    [stone],
   )
 
   const bodyGeometry = useMemo(
@@ -243,20 +486,30 @@ function CarveSurface({
   const stoneTextures = useRockTextures(2.2)
   const greenStone = useGreenStoneTexture(stone, 2)
   const stoneNormalScale = useMemo(() => new THREE.Vector2(0.12, 0.12), [])
+  const carveNormalScale = useMemo(() => new THREE.Vector2(1.1, 1.1), [])
 
   const heightTextureRef = useRef(heightTexture)
   const colorTextureRef = useRef(colorTexture)
+  const normalTextureRef = useRef(normalTexture)
   const drawingRef = useRef(false)
   const lastUvRef = useRef<THREE.Vector2 | null>(null)
+  const normalUpdatePendingRef = useRef(false)
 
   useEffect(() => {
     heightTextureRef.current = heightTexture
     colorTextureRef.current = colorTexture
-  }, [heightTexture, colorTexture])
+    normalTextureRef.current = normalTexture
+  }, [heightTexture, colorTexture, normalTexture])
+
+  useEffect(() => {
+    updateNormalMap(heightCanvas, normalCanvas)
+    normalTexture.needsUpdate = true
+  }, [heightCanvas, normalCanvas, normalTexture])
 
   useEffect(() => () => geometry.dispose(), [geometry])
   useEffect(() => () => heightTexture.dispose(), [heightTexture])
   useEffect(() => () => colorTexture.dispose(), [colorTexture])
+  useEffect(() => () => normalTexture.dispose(), [normalTexture])
   useEffect(() => () => guideTexture?.dispose(), [guideTexture])
   useEffect(
     () => () => {
@@ -354,9 +607,10 @@ function CarveSurface({
         stampY,
         colorRadius,
       )
-      colorGradient.addColorStop(0, `rgba(4, 11, 8, ${colorAlpha})`)
-      colorGradient.addColorStop(0.65, `rgba(4, 11, 8, ${colorAlpha * 0.55})`)
-      colorGradient.addColorStop(1, 'rgba(4, 11, 8, 0)')
+      const reveal = CARVE_REVEAL[stone]
+      colorGradient.addColorStop(0, `${reveal}${colorAlpha})`)
+      colorGradient.addColorStop(0.65, `${reveal}${colorAlpha * 0.55})`)
+      colorGradient.addColorStop(1, `${reveal}0)`)
       colorContext.fillStyle = colorGradient
       colorContext.beginPath()
       colorContext.arc(stampX, stampY, colorRadius, 0, Math.PI * 2)
@@ -404,6 +658,16 @@ function CarveSurface({
     lastUvRef.current = uv.clone()
     heightTextureRef.current.needsUpdate = true
     colorTextureRef.current.needsUpdate = true
+
+    // 节流重算法线（每帧最多一次），让凹槽有立体光影
+    if (!normalUpdatePendingRef.current) {
+      normalUpdatePendingRef.current = true
+      requestAnimationFrame(() => {
+        normalUpdatePendingRef.current = false
+        updateNormalMap(heightCanvas, normalCanvas)
+        normalTextureRef.current.needsUpdate = true
+      })
+    }
   }
 
   return (
@@ -439,16 +703,16 @@ function CarveSurface({
       >
         <meshPhysicalMaterial
           map={greenStone}
-          normalMap={stoneTextures.normalMap}
+          normalMap={normalTexture}
           roughnessMap={stoneTextures.roughnessMap}
-          normalScale={stoneNormalScale}
+          normalScale={carveNormalScale}
           color="#ffffff"
           roughness={0.32}
           metalness={0.03}
           clearcoat={0.4}
           clearcoatRoughness={0.35}
           displacementMap={heightTexture}
-          displacementScale={-0.08}
+          displacementScale={-0.2}
           emissive="#ffffff"
           emissiveMap={guideTexture ?? undefined}
           emissiveIntensity={showGuide ? 0.9 : 0}
