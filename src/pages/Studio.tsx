@@ -293,6 +293,10 @@ function Studio() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const captureRef = useRef<(() => string | null) | null>(null)
+  const undoRef = useRef<(() => void) | null>(null)
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(
+    null,
+  )
 
   const activeImage = customImage ?? stone.image
   const materialName = customImage ? (customLabel ?? '自定义石料') : stone.name
@@ -897,6 +901,12 @@ function Studio() {
                     <div className="tool-actions">
                       <button
                         type="button"
+                        onClick={() => undoRef.current?.()}
+                      >
+                        撤销
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setCarve3DKey((key) => key + 1)}
                       >
                         重置 3D 刻面
@@ -904,7 +914,19 @@ function Studio() {
                     </div>
                   </div>
 
-                  <div className="carve-3d-stage" key={carve3DKey}>
+                  <div
+                    className="carve-3d-stage"
+                    key={carve3DKey}
+                    onPointerMove={(event) => {
+                      if (carve3DMode !== 'carve') return
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      setCursorPos({
+                        x: event.clientX - rect.left,
+                        y: event.clientY - rect.top,
+                      })
+                    }}
+                    onPointerLeave={() => setCursorPos(null)}
+                  >
                       <Carve3D
                         tool={tool}
                         brushSize={brushSize}
@@ -915,6 +937,9 @@ function Studio() {
                         stone={stone.id}
                         onCaptureReady={(capture) => {
                           captureRef.current = capture
+                        }}
+                        onUndoReady={(undo) => {
+                          undoRef.current = undo
                         }}
                       />
                       <div className="carve-3d-modes" aria-label="3D 视角">
@@ -938,6 +963,18 @@ function Studio() {
                           ? '拖动旋转 · 滚轮缩放'
                           : '按住拖动，在石面上刻出真实 3D 凹槽'}
                       </span>
+                      {carve3DMode === 'carve' && cursorPos && (
+                        <span
+                          className="carve-cursor"
+                          aria-hidden="true"
+                          style={{
+                            left: cursorPos.x,
+                            top: cursorPos.y,
+                            width: brushSize,
+                            height: brushSize,
+                          }}
+                        />
+                      )}
                     </div>
 
                   <div className="carve-footer">

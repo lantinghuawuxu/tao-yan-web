@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import {
   ContactShadows,
@@ -29,6 +29,14 @@ const STONE_SHAPE: Record<StoneVariant, InkstoneShape> = {
   green: '圆形',
   yellow: '长方',
   purple: '随形',
+}
+
+// 纹样浮雕高度图：按真实洮砚照片构图生成的黑白浮雕（反相后黑=凸、白=凹），映射到雕刻面
+const PATTERN_HEIGHT_SRC: Record<InkstonePattern, string> = {
+  lotus: 'textures/patterns/lotus_height.png',
+  cloud: 'textures/patterns/cloud_height.png',
+  wave: 'textures/patterns/wave_height.png',
+  meander: 'textures/patterns/meander_height.png',
 }
 
 // 砚池缩放：createShape 的砚池尺寸为完整砚台设计，缩放到 2.6×1.6 雕刻面内
@@ -154,7 +162,7 @@ function createGuideTexture(pattern: InkstonePattern, patternScale = 1) {
   texture.colorSpace = THREE.SRGBColorSpace
   texture.anisotropy = 8
   texture.needsUpdate = true
-  return texture
+  return { texture, canvas }
 }
 
 // 雕刻露出的「深层石色」——真实雕刻是削去表层、露出内部更深更润的石色
@@ -374,6 +382,7 @@ function CarveSurface({
   patternScale,
   showGuide,
   stone,
+  onUndoReady,
 }: {
   tool: CarveTool
   brushSize: number
@@ -382,45 +391,30 @@ function CarveSurface({
   patternScale: number
   showGuide: boolean
   stone: StoneVariant
+  onUndoReady?: (undo: () => void) => void
 }) {
   const heightCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
     canvas.width = CANVAS_SIZE
     canvas.height = CANVAS_SIZE
-    const context = canvas.getContext('2d')
-    if (context) {
-      // 基底中灰：让纹样浮雕与砚池有起伏空间
-      context.fillStyle = '#4f4f4f'
-      context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
-      // 世界坐标变换（Y 反向，与池片 ShapeGeometry 朝向一致）
-      const scaleX = CANVAS_SIZE / GUIDE_WIDTH
-      const scaleY = CANVAS_SIZE / GUIDE_HEIGHT
-      context.setTransform(
-        scaleX,
-        0,
-        0,
-        -scaleY,
-        CANVAS_SIZE / 2,
-        CANVAS_SIZE / 2,
-      )
-      const pools = getCarvePools(stone)
-      // 砚池深坑（白=凹）
-      context.fillStyle = '#ffffff'
-      for (const pool of pools) {
-        const points = pool.getPoints(64)
-        context.beginPath()
-        points.forEach((point, index) => {
-          if (index === 0) context.moveTo(point.x, point.y)
-          else context.lineTo(point.x, point.y)
-        })
-        context.closePath()
-        context.fill()
-      }
-      // 纹样浮雕
-      drawPatternRelief(context, pattern, pools, stone)
-    }
     return canvas
-  }, [pattern, stone])
+  }, [])
+
+  // 纹样浮雕高度图（真实照片构图，反相后黑=凸白=凹）
+  const [patternImg, setPatternImg] = useState<HTMLImageElement | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const img = new Image()
+    img.onload = () => {
+      if (!cancelled) setPatternImg(img)
+    }
+    img.src = PATTERN_HEIGHT_SRC[pattern]
+    return () => {
+      cancelled = true
+      img.onload = null
+    }
+  }, [pattern])
 
   const colorCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -447,7 +441,7 @@ function CarveSurface({
     return texture
   }, [colorCanvas])
 
-  const guideTexture = useMemo(
+  const guide = useMemo(
     () => createGuideTexture(pattern, patternScale),
     [pattern, patternScale],
   )
@@ -502,11 +496,58 @@ function CarveSurface({
     normalTexture.needsUpdate = true
   }, [heightCanvas, normalCanvas, normalTexture])
 
+  // 重绘高度图：基底中灰 → 纹样浮雕（真实照片构图）→ 砚池深坑
+  useEffect(() => {
+    const context = heightCanvas.getContext('2d')
+    if (!context) return
+    const scaleX = CANVAS_SIZE / GUIDE_WIDTH
+    const scaleY = CANVAS_SIZE / GUIDE_HEIGHT
+    const pools = getCarvePools(stone)
+
+    // 1. 基底中灰（石面基准）
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    context.fillStyle = '#808080'
+    context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
+
+    // 2. 纹样浮雕（真实照片构图）；图未加载时用程序化浮雕兜底
+    if (patternImg) {
+      context.drawImage(patternImg, 0, 0, CANVAS_SIZE, CANVAS_SIZE)
+    } else {
+      context.setTransform(
+        scaleX,
+        0,
+        0,
+        -scaleY,
+        CANVAS_SIZE / 2,
+        CANVAS_SIZE / 2,
+      )
+      drawPatternRelief(context, pattern, pools, stone)
+    }
+
+    // 3. 砚池深坑（白=凹，覆盖中央）
+    context.setTransform(scaleX, 0, 0, -scaleY, CANVAS_SIZE / 2, CANVAS_SIZE / 2)
+    context.fillStyle = '#ffffff'
+    for (const pool of pools) {
+      const points = pool.getPoints(64)
+      context.beginPath()
+      points.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x, point.y)
+        else context.lineTo(point.x, point.y)
+      })
+      context.closePath()
+      context.fill()
+    }
+
+    heightTextureRef.current.needsUpdate = true
+    updateNormalMap(heightCanvas, normalCanvas)
+    normalTextureRef.current.needsUpdate = true
+  }, [patternImg, pattern, stone, heightCanvas, normalCanvas, normalTexture])
+
   useEffect(() => () => geometry.dispose(), [geometry])
   useEffect(() => () => heightTexture.dispose(), [heightTexture])
   useEffect(() => () => colorTexture.dispose(), [colorTexture])
   useEffect(() => () => normalTexture.dispose(), [normalTexture])
-  useEffect(() => () => guideTexture?.dispose(), [guideTexture])
+  useEffect(() => () => guide?.texture.dispose(), [guide])
   useEffect(
     () => () => {
       for (const pool of poolGeometries) pool.dispose()
@@ -652,19 +693,64 @@ function CarveSurface({
     heightContext.restore()
     colorContext.restore()
     lastUvRef.current = uv.clone()
-    heightTextureRef.current.needsUpdate = true
-    colorTextureRef.current.needsUpdate = true
 
-    // 节流重算法线（每帧最多一次），让凹槽有立体光影
+    // 辅助线「刻到哪消失到哪」：即时擦除刻痕区域的引导线
+    const guideContext = guide?.canvas.getContext('2d')
+    if (guideContext) {
+      guideContext.clearRect(
+        x - baseRadius,
+        y - baseRadius,
+        baseRadius * 2,
+        baseRadius * 2,
+      )
+    }
+
+    // 节流上传（每帧最多一次）：高度/颜色/辅助线/法线统一批量 needsUpdate，
+    // 避免 pointermove 高频全量重传 1024² 纹理，移动端不卡
     if (!normalUpdatePendingRef.current) {
       normalUpdatePendingRef.current = true
       requestAnimationFrame(() => {
         normalUpdatePendingRef.current = false
+        heightTextureRef.current.needsUpdate = true
+        colorTextureRef.current.needsUpdate = true
+        if (guide?.texture) guide.texture.needsUpdate = true
         updateNormalMap(heightCanvas, normalCanvas)
         normalTextureRef.current.needsUpdate = true
       })
     }
   }
+
+  // —— 撤销：每次下刀前保存高度图/颜色图快照 ——
+  const historyRef = useRef<{ h: ImageData; c: ImageData }[]>([])
+
+  const snapshot = () => {
+    const heightContext = heightCanvas.getContext('2d')
+    const colorContext = colorCanvas.getContext('2d')
+    if (!heightContext || !colorContext) return
+    historyRef.current.push({
+      h: heightContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE),
+      c: colorContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE),
+    })
+    if (historyRef.current.length > 20) historyRef.current.shift()
+  }
+
+  const undo = useCallback(() => {
+    const last = historyRef.current.pop()
+    if (!last) return
+    const heightContext = heightCanvas.getContext('2d')
+    const colorContext = colorCanvas.getContext('2d')
+    if (!heightContext || !colorContext) return
+    heightContext.putImageData(last.h, 0, 0)
+    colorContext.putImageData(last.c, 0, 0)
+    heightTextureRef.current.needsUpdate = true
+    colorTextureRef.current.needsUpdate = true
+    updateNormalMap(heightCanvas, normalCanvas)
+    normalTextureRef.current.needsUpdate = true
+  }, [heightCanvas, colorCanvas, normalCanvas, normalTexture])
+
+  useEffect(() => {
+    onUndoReady?.(undo)
+  }, [onUndoReady, undo])
 
   return (
     <group rotation={[0.08, -0.25, 0.01]}>
@@ -679,6 +765,7 @@ function CarveSurface({
           event.stopPropagation()
           drawingRef.current = true
           lastUvRef.current = null
+          snapshot()
           if (event.uv) paint(event.uv)
         }}
         onPointerMove={(event) => {
@@ -710,7 +797,7 @@ function CarveSurface({
           displacementMap={heightTexture}
           displacementScale={-0.2}
           emissive="#ffffff"
-          emissiveMap={guideTexture ?? undefined}
+          emissiveMap={guide?.texture}
           emissiveIntensity={showGuide ? 0.9 : 0}
         />
       </mesh>
@@ -794,6 +881,7 @@ export function Carve3D({
   showGuide,
   stone = 'green',
   onCaptureReady,
+  onUndoReady,
 }: {
   tool: CarveTool
   brushSize: number
@@ -803,6 +891,7 @@ export function Carve3D({
   showGuide: boolean
   stone?: StoneVariant
   onCaptureReady?: (capture: () => string | null) => void
+  onUndoReady?: (undo: () => void) => void
 }) {
   return (
     <Canvas
@@ -844,6 +933,7 @@ export function Carve3D({
         patternScale={patternScale}
         showGuide={showGuide}
         stone={stone}
+        onUndoReady={onUndoReady}
       />
       <ContactShadows
         position={[0, -0.23, 0]}

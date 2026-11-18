@@ -1025,6 +1025,18 @@
   pointer-events: none;
 }
 
+.carve-cursor {
+  position: absolute;
+  z-index: 5;
+  border: 1.5px solid rgba(199, 168, 107, 0.9);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgba(13, 29, 25, 0.6),
+    0 0 8px rgba(199, 168, 107, 0.5);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 .carve-footer {
   display: flex;
   flex-wrap: wrap;
