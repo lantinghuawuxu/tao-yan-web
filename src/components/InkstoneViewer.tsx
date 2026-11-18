@@ -27,7 +27,7 @@ function InkstoneModel({
   pattern: InkstonePattern
 }) {
   const stoneTextures = useRockTextures(1.2)
-  const greenStone = useGreenStoneTexture(1.2)
+  const greenStone = useGreenStoneTexture('green', 1.2)
   const normalScale = useMemo(() => new THREE.Vector2(0.15, 0.15), [])
   const model = useMemo(() => {
     const body = createGroovedBody(shape, pattern)

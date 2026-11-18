@@ -322,18 +322,18 @@ export function createRimBody(shape: InkstoneShape) {
   return body
 }
 
-// 雕刻台砚身：圆角矩形砚边包裹矩形雕刻面，中央留随形砚池凹坑
+// 雕刻台砚身：圆角矩形砚边（边框），中央挖出雕刻面大小的开口，让雕刻面完全暴露可交互
 export function createCarveBody(planeWidth: number, planeHeight: number) {
-  const { pools } = createShape('随形')
   const outer = roundedRect(planeWidth + 0.24, planeHeight + 0.24, 0.16)
-  outer.holes = pools.map(reverseShape)
+  const opening = roundedRect(planeWidth, planeHeight, 0.08)
+  outer.holes = [reverseShape(opening)]
 
   const body = new THREE.ExtrudeGeometry(outer, {
     depth: THICKNESS,
     bevelEnabled: true,
     bevelSegments: 4,
-    bevelSize: 0.04,
-    bevelThickness: 0.03,
+    bevelSize: 0.05,
+    bevelThickness: 0.035,
     curveSegments: 48,
   })
   body.rotateX(-Math.PI / 2)

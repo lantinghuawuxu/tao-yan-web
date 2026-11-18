@@ -13,7 +13,7 @@ type Tool = 'chisel' | 'fine' | 'polish'
 type PatternId = 'lotus' | 'cloud' | 'wave' | 'meander'
 
 type Stone = {
-  id: string
+  id: 'green' | 'yellow' | 'purple'
   name: string
   subtitle: string
   image: string
@@ -898,6 +898,7 @@ function Studio() {
                         orbit={carve3DMode === 'orbit'}
                         patternScale={patternScale}
                         showGuide={showGuide}
+                        stone={stone.id}
                         onCaptureReady={(capture) => {
                           captureRef.current = capture
                         }}

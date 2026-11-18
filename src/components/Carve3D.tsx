@@ -13,7 +13,10 @@ import {
   type InkstoneShape,
   type InkstonePattern,
 } from './inkstoneGeometry'
-import { useGreenStoneTexture } from './useGreenStoneTexture'
+import {
+  useGreenStoneTexture,
+  type StoneVariant,
+} from './useGreenStoneTexture'
 import { useRockTextures } from './useRockTextures'
 
 type CarveTool = 'chisel' | 'fine' | 'polish'
@@ -21,7 +24,13 @@ type CarveTool = 'chisel' | 'fine' | 'polish'
 const CANVAS_SIZE = 1024
 const GUIDE_WIDTH = 2.6
 const GUIDE_HEIGHT = 1.6
-const INKSTONE_SHAPE: InkstoneShape = '随形'
+// 纹样 → 砚池器型映射：不同题材配不同形状的砚池（真实洮砚「因题材定池」）
+const PATTERN_SHAPE: Record<InkstonePattern, InkstoneShape> = {
+  lotus: '圆形',
+  cloud: '椭圆',
+  wave: '随形',
+  meander: '长方',
+}
 
 function roundedRectPath(
   context: CanvasRenderingContext2D,
@@ -144,6 +153,7 @@ function CarveSurface({
   orbit,
   patternScale,
   showGuide,
+  stone,
 }: {
   tool: CarveTool
   brushSize: number
@@ -151,6 +161,7 @@ function CarveSurface({
   orbit: boolean
   patternScale: number
   showGuide: boolean
+  stone: StoneVariant
 }) {
   const heightCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -161,7 +172,7 @@ function CarveSurface({
       context.fillStyle = '#000'
       context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
       // 预置砚池凹陷：让雕刻面在砚池位置下沉，露出下方深色砚池片
-      const { pools } = createShape(INKSTONE_SHAPE)
+      const { pools } = createShape(PATTERN_SHAPE[pattern])
       context.fillStyle = 'rgba(255, 255, 255, 1)'
       for (const pool of pools) {
         const points = pool.getPoints(64)
@@ -179,7 +190,7 @@ function CarveSurface({
       }
     }
     return canvas
-  }, [])
+  }, [pattern])
 
   const colorCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -218,10 +229,10 @@ function CarveSurface({
 
   const poolGeometries = useMemo(
     () =>
-      createShape(INKSTONE_SHAPE).pools.map(
+      createShape(PATTERN_SHAPE[pattern]).pools.map(
         (pool) => new THREE.ShapeGeometry(pool),
       ),
-    [],
+    [pattern],
   )
 
   const bodyGeometry = useMemo(
@@ -230,7 +241,7 @@ function CarveSurface({
   )
 
   const stoneTextures = useRockTextures(2.2)
-  const greenStone = useGreenStoneTexture(2)
+  const greenStone = useGreenStoneTexture(stone, 2)
   const stoneNormalScale = useMemo(() => new THREE.Vector2(0.12, 0.12), [])
 
   const heightTextureRef = useRef(heightTexture)
@@ -400,7 +411,7 @@ function CarveSurface({
       <mesh
         geometry={geometry}
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.21, 0]}
+        position={[0, 0.2, 0]}
         receiveShadow
         renderOrder={0}
         onPointerDown={(event) => {
@@ -446,7 +457,7 @@ function CarveSurface({
 
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.211, 0]}
+        position={[0, 0.201, 0]}
         raycast={() => {}}
         renderOrder={1}
       >
@@ -459,10 +470,11 @@ function CarveSurface({
         />
       </mesh>
 
-      {/* 砚身：圆角矩形砚边包裹雕刻面，中央留随形砚池凹坑 */}
+      {/* 砚身：圆角矩形砚边（边框），中央开口露出雕刻面 */}
       <mesh
         geometry={bodyGeometry}
-        position={[0, 0.2, 0]}
+        position={[0, 0.21, 0]}
+        raycast={() => {}}
         castShadow
         receiveShadow
       >
@@ -484,8 +496,9 @@ function CarveSurface({
         <mesh
           key={index}
           geometry={pool}
-          position={[0, 0.14, 0]}
+          position={[0, 0.13, 0]}
           rotation={[-Math.PI / 2, 0, 0]}
+          raycast={() => {}}
           receiveShadow
         >
           <meshPhysicalMaterial
@@ -519,6 +532,7 @@ export function Carve3D({
   orbit,
   patternScale,
   showGuide,
+  stone = 'green',
   onCaptureReady,
 }: {
   tool: CarveTool
@@ -527,6 +541,7 @@ export function Carve3D({
   orbit: boolean
   patternScale: number
   showGuide: boolean
+  stone?: StoneVariant
   onCaptureReady?: (capture: () => string | null) => void
 }) {
   return (
@@ -568,6 +583,7 @@ export function Carve3D({
         orbit={orbit}
         patternScale={patternScale}
         showGuide={showGuide}
+        stone={stone}
       />
       <ContactShadows
         position={[0, -0.23, 0]}
