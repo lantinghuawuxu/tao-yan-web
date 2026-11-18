@@ -686,11 +686,23 @@
 .pattern-thumb {
   display: block;
   aspect-ratio: 4 / 3;
-  padding: 12px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 6px;
   color: var(--gold-light);
-  background:
-    radial-gradient(circle at 50% 40%, rgba(79, 125, 109, 0.28), transparent 70%),
-    var(--ink);
+  background: var(--ink);
+}
+
+.pattern-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.pattern-option:hover .pattern-thumb img {
+  transform: scale(1.05);
 }
 
 .pattern-thumb svg {

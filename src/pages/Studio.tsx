@@ -28,8 +28,8 @@ const stones: Stone[] = [
   {
     id: 'green',
     name: '鹦哥绿',
-    subtitle: '水泉湾 · 细密水纹',
-    image: 'images/stone-snow.jpg',
+    subtitle: '喇嘛崖 · 深绿细润',
+    image: 'images/stone-green.jpg',
     completeness: 94,
     cracks: 1,
     carvable: 82,
@@ -65,30 +65,40 @@ const patterns: {
   name: string
   note: string
   meaning: string
+  image: string
+  shape: string
 }[] = [
   {
     id: 'lotus',
     name: '莲纹',
     note: '清雅吉祥',
     meaning: '莲花出淤泥而不染，是洮砚最常见的传统题材之一，常与砚池、水波一起构图。',
+    image: 'images/inkstones/lianwen-yuan.jpg',
+    shape: '圆形砚',
   },
   {
     id: 'cloud',
     name: '云纹',
     note: '如意绵延',
     meaning: '云气纹在洮砚与汉藏装饰中都有悠久传统，线条回旋，寓意吉祥绵延。',
+    image: 'images/inkstones/heyu-tuoyuan.jpg',
+    shape: '椭圆砚',
   },
   {
     id: 'wave',
     name: '水波',
     note: '顺势而刻',
     meaning: '顺着洮河石天然水纹构图，因石施艺，是洮砚“相石而作”的典型思路。',
+    image: 'images/inkstones/shuangchi-suxian.jpg',
+    shape: '随形砚',
   },
   {
     id: 'meander',
     name: '回纹',
     note: '绵长不断',
     meaning: '回纹以连续折线寓意绵延不绝，常作为砚台边饰，稳重而有秩序。',
+    image: 'images/inkstones/zhezhi-changfang.jpg',
+    shape: '长方砚',
   },
 ]
 
@@ -508,7 +518,7 @@ function Studio() {
                 <div className="studio-panel">
                   <h2 className="panel-title">选择一块数字原石</h2>
                   <p className="panel-desc">
-                    这些石料来自洮河峡谷的不同坑口。点选一块，观察它的颜色、石膘与水纹。
+                    参考洮河峡谷不同坑口的真实石料特征绘制（示意图片）。点选一块，观察它的颜色、石膘与水纹。
                   </p>
 
                   <div className="stone-select">
@@ -722,7 +732,7 @@ function Studio() {
                 <div className="studio-panel">
                   <h2 className="panel-title">选择雕刻纹样</h2>
                   <p className="panel-desc">
-                    选一个纹样作为辅助线。纹样会以金色线条叠加在石面上，你可以按自己的理解下刀。
+                    下面是对应的真实洮砚照片，选一个纹样作为参考。金色辅助线会叠加在石面上，最终构图仍由你决定。
                   </p>
 
                   <div className="pattern-grid">
@@ -736,11 +746,15 @@ function Studio() {
                         onClick={() => setPattern(item)}
                       >
                         <span className="pattern-thumb">
-                          <PatternArt id={item.id} />
+                          <img
+                            src={item.image}
+                            alt={`${item.name} · ${item.shape}`}
+                            loading="lazy"
+                          />
                         </span>
                         <span className="pattern-text">
                           <strong>{item.name}</strong>
-                          <span>{item.note}</span>
+                          <span>{item.shape}</span>
                         </span>
                       </button>
                     ))}
