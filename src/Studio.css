@@ -786,8 +786,8 @@
   z-index: 3;
   color: var(--gold-light);
   pointer-events: none;
-  opacity: 0.58;
-  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.35));
+  opacity: 1;
+  filter: drop-shadow(0 3px 12px rgba(0, 0, 0, 0.42));
   transition:
     transform 0.35s ease,
     opacity 0.35s ease;
@@ -796,6 +796,15 @@
 .pattern-overlay svg {
   width: 100%;
   height: 100%;
+}
+
+/* 真实纹样浮雕预览：铺满预览框，呈现「刻好之后」的效果 */
+.pattern-relief {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 2px;
 }
 
 .carve-layout {

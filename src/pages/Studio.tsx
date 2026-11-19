@@ -6,6 +6,7 @@ import {
 } from 'react'
 import { Carve3D } from '../components/Carve3D'
 import { InkstoneViewer } from '../components/InkstoneViewer'
+import { PatternRelief } from '../components/PatternRelief'
 import '../Studio.css'
 
 type Step = 1 | 2 | 3 | 4 | 5
@@ -159,97 +160,6 @@ const tools: { id: Tool; label: string; glyph: string; note: string }[] = [
   },
 ]
 
-function LotusPattern() {
-  return (
-    <svg
-      viewBox="0 0 400 300"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="200" cy="146" r="118" strokeDasharray="2 7" opacity="0.5" />
-      {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => (
-        <path
-          key={angle}
-          d="M200 146 C176 118 176 82 200 58 C224 82 224 118 200 146Z"
-          transform={`rotate(${angle} 200 146)`}
-        />
-      ))}
-      <circle cx="200" cy="146" r="18" />
-      <path d="M200 146 C170 176 132 190 92 190 C116 210 156 212 200 192 C244 212 284 210 308 190 C268 190 230 176 200 146Z" />
-      <path d="M200 192 L200 264" />
-      <path d="M200 224 C176 216 158 220 146 238 C168 244 186 240 200 224Z" />
-      <path d="M200 240 C224 232 242 236 254 254 C232 260 214 256 200 240Z" />
-    </svg>
-  )
-}
-
-function CloudPattern() {
-  return (
-    <svg
-      viewBox="0 0 400 300"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M46 188 C46 158 78 146 100 158 C104 124 152 116 174 146 C190 114 244 114 260 148 C286 132 322 148 322 178 C350 178 358 212 334 224 L74 224 C50 224 38 202 46 188Z" />
-      <path d="M92 252 C112 236 134 236 154 252" />
-      <path d="M176 252 C196 236 218 236 238 252" />
-      <path d="M260 252 C280 236 302 236 322 252" />
-      <path d="M86 96 C104 80 124 80 142 96" />
-      <path d="M258 96 C276 80 296 80 314 96" />
-    </svg>
-  )
-}
-
-function WavePattern() {
-  return (
-    <svg
-      viewBox="0 0 400 300"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {[0, 1, 2, 3].map((row) => (
-        <path
-          key={row}
-          d={`M10 ${96 + row * 46} C48 ${60 + row * 46} 90 ${60 + row * 46} 128 ${96 + row * 46} C166 ${132 + row * 46} 208 ${132 + row * 46} 246 ${96 + row * 46} C284 ${60 + row * 46} 326 ${60 + row * 46} 390 ${96 + row * 46}`}
-        />
-      ))}
-      <path d="M70 64 C88 48 108 48 126 64" />
-      <path d="M230 64 C248 48 268 48 286 64" />
-    </svg>
-  )
-}
-
-function MeanderPattern() {
-  return (
-    <svg
-      viewBox="0 0 400 300"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M44 54 H356 V246 H44 V96 H310 V204 H86 V138 H264 V170 H128" />
-      <path d="M78 78 H322 V222 H78 V120 H280 V180 H112" opacity="0.55" />
-    </svg>
-  )
-}
-
-function PatternArt({ id }: { id: PatternId }) {
-  if (id === 'lotus') return <LotusPattern />
-  if (id === 'cloud') return <CloudPattern />
-  if (id === 'wave') return <WavePattern />
-  return <MeanderPattern />
-}
 
 function drawCover(
   ctx: CanvasRenderingContext2D,
@@ -825,16 +735,15 @@ function Studio() {
 
                   {previewMode === 'stone' ? (
                     <div className="preview-frame">
-                      <img src={activeImage} alt={materialName} />
                       <div
                         className="pattern-overlay"
                         style={{
                           transform: `scale(${patternScale})`,
                         }}
                       >
-                        <PatternArt id={pattern.id} />
+                        <PatternRelief id={pattern.id} stone={stone.id} />
                       </div>
-                      <span className="preview-tag">纹样辅助线</span>
+                      <span className="preview-tag">纹样浮雕效果</span>
                       <span className="preview-name">
                         {pattern.name} · {Math.round(patternScale * 100)}%
                       </span>
@@ -856,7 +765,7 @@ function Studio() {
 
                   <p className="preview-note">
                     {previewMode === 'stone'
-                      ? '金色线条只是辅助。真正的刻痕由你决定，也可以完全抛开纹样自由发挥。'
+                      ? '这就是该纹样刻到石面上的实际浮雕效果——3D 雕刻台里用的是同一张高度图，看到什么就能刻出什么。'
                       : '3D 预览为器型与纹样示意；正式器型与纹样需由传承人/馆方审校。'}
                   </p>
                 </div>

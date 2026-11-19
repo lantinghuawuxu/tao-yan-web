@@ -345,51 +345,42 @@ export function createCarveBody(planeWidth: number, planeHeight: number) {
 // —— 原石随形几何：每块洮河石都有天然不规则的随形外缘（相石而作）——
 export type RawStone = 'green' | 'yellow' | 'purple'
 
-// 射线法点命中判断（不依赖 Shape.containsPoint，凹/凸多边形都可靠）
-function pointInShape(shape: THREE.Shape, x: number, y: number) {
-  const points = shape.getPoints(96)
-  let inside = false
-  for (let i = 0, j = points.length - 1; i < points.length; j = i += 1) {
-    const xi = points[i].x
-    const yi = points[i].y
-    const xj = points[j].x
-    const yj = points[j].y
-    const hit =
-      (yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
-    if (hit) inside = !inside
-  }
-  return inside
+// 原石轮廓：三种石料三套不同扰动（主频/次频/相位），包围盒约 2.6×1.6
+const RAW_PARAMS: Record<
+  RawStone,
+  { a: number; b: number; c: number; p1: number; p2: number; p3: number }
+> = {
+  green: { a: 0.1, b: 0.06, c: 0.03, p1: 0.9, p2: -0.5, p3: 0.2 },
+  yellow: { a: 0.05, b: 0.1, c: 0.04, p1: 2.2, p2: 1.1, p3: -0.7 },
+  purple: { a: 0.12, b: 0.04, c: 0.06, p1: -0.4, p2: 0.3, p3: 2.4 },
 }
 
-function scaleShape(shape: THREE.Shape, scale: number) {
-  return new THREE.Shape(
-    shape.getPoints(96).map((point) => point.clone().multiplyScalar(scale)),
+const RAW_SEGMENTS = 128
+
+function rawScale(stone: RawStone) {
+  const s = RAW_PARAMS[stone]
+  const maxAmp = 1 + s.a + s.b + s.c
+  return { scaleX: 1.3 / maxAmp, scaleY: 0.8 / maxAmp }
+}
+
+// 轮廓的极坐标半径函数 r(θ)。判点是否在形内只需比较半径 —— O(1)，
+// 比「多边形射线法逐点遍历」快几个数量级（裁剪 8 万个三角形时是必须的）
+function rawRadius(stone: RawStone, angle: number) {
+  const s = RAW_PARAMS[stone]
+  return (
+    1 +
+    Math.sin(angle * 3 + s.p1) * s.a +
+    Math.cos(angle * 5 + s.p2) * s.b +
+    Math.sin(angle * 7 + s.p3) * s.c
   )
 }
 
-// 原石轮廓：三种石料三套不同扰动（主频/次频/相位），包围盒约 2.6×1.6
-export function createRawStoneShape(stone: RawStone) {
-  const params: Record<
-    RawStone,
-    { a: number; b: number; c: number; p1: number; p2: number; p3: number }
-  > = {
-    green: { a: 0.1, b: 0.06, c: 0.03, p1: 0.9, p2: -0.5, p3: 0.2 },
-    yellow: { a: 0.05, b: 0.1, c: 0.04, p1: 2.2, p2: 1.1, p3: -0.7 },
-    purple: { a: 0.12, b: 0.04, c: 0.06, p1: -0.4, p2: 0.3, p3: 2.4 },
-  }
-  const s = params[stone]
-  const maxAmp = 1 + s.a + s.b + s.c
-  const scaleX = 1.3 / maxAmp
-  const scaleY = 0.8 / maxAmp
-  const segments = 96
+function rawStonePoints(stone: RawStone, scale = 1): THREE.Vector2[] {
+  const { scaleX, scaleY } = rawScale(stone)
   const points: THREE.Vector2[] = []
-  for (let i = 0; i < segments; i += 1) {
-    const angle = (i / segments) * Math.PI * 2
-    const radius =
-      1 +
-      Math.sin(angle * 3 + s.p1) * s.a +
-      Math.cos(angle * 5 + s.p2) * s.b +
-      Math.sin(angle * 7 + s.p3) * s.c
+  for (let i = 0; i < RAW_SEGMENTS; i += 1) {
+    const angle = (i / RAW_SEGMENTS) * Math.PI * 2
+    const radius = rawRadius(stone, angle) * scale
     points.push(
       new THREE.Vector2(
         Math.cos(angle) * radius * scaleX,
@@ -397,22 +388,43 @@ export function createRawStoneShape(stone: RawStone) {
       ),
     )
   }
-  return new THREE.Shape(points)
+  return points
+}
+
+// 点是否落在原石轮廓内（scale 为轮廓缩放，例如 0.97 表示内缩 3%）
+export function insideRawStone(
+  stone: RawStone,
+  x: number,
+  y: number,
+  scale = 1,
+) {
+  const { scaleX, scaleY } = rawScale(stone)
+  const nx = x / scaleX
+  const ny = y / scaleY
+  const radius = Math.hypot(nx, ny)
+  if (radius < 1e-6) return true
+  return radius <= rawRadius(stone, Math.atan2(ny, nx)) * scale
+}
+
+export function createRawStoneShape(stone: RawStone, scale = 1) {
+  return new THREE.Shape(rawStonePoints(stone, scale))
 }
 
 // 原石石沿（边框）：外缘=原石放大，内缘开口=原石缩小，中央露出可雕刻的磨平面
 export function createRawStoneRim(stone: RawStone) {
-  const raw = createRawStoneShape(stone)
-  const outer = scaleShape(raw, 1.06)
-  const opening = scaleShape(raw, 0.93)
-  outer.holes = [new THREE.Path(opening.getPoints(96).reverse())]
+  const outer = createRawStoneShape(stone, 1.06)
+  // 洞口内缩 10%：砚边宽度约为一成，磨平面（砚堂）从中露出
+  const opening = rawStonePoints(stone, 0.9).reverse()
+  outer.holes = [new THREE.Path(opening)]
 
   const body = new THREE.ExtrudeGeometry(outer, {
     depth: THICKNESS,
+    // 倒角必须远小于砚边宽度（短轴方向边宽仅约 0.12），
+    // 否则内外两侧的倒角面会互相穿插，沿洞口长出一圈「玉米粒」尖刺
     bevelEnabled: true,
-    bevelSegments: 4,
-    bevelSize: 0.05,
-    bevelThickness: 0.035,
+    bevelSegments: 2,
+    bevelSize: 0.015,
+    bevelThickness: 0.015,
     curveSegments: 48,
   })
   body.rotateX(-Math.PI / 2)
@@ -421,7 +433,27 @@ export function createRawStoneRim(stone: RawStone) {
   return body
 }
 
-// 雕刻面：高细分矩形，原石轮廓外的顶点压到砚身之下（藏进石沿），形成天然随形外缘
+// 原石底座：实心随形厚板，顶面略低于雕刻面最低点，作为砚堂/砚池的底
+// （没有它，石沿就是一圈悬空的环，中间是空的——真实砚台是实心的）
+export function createRawStoneBase(stone: RawStone) {
+  const outer = createRawStoneShape(stone, 1.03)
+  const body = new THREE.ExtrudeGeometry(outer, {
+    depth: 0.5,
+    bevelEnabled: true,
+    bevelSegments: 3,
+    bevelSize: 0.04,
+    bevelThickness: 0.03,
+    curveSegments: 40,
+  })
+  body.rotateX(-Math.PI / 2)
+  body.translate(0, -0.5, 0)
+  body.computeVertexNormals()
+  return body
+}
+
+// 雕刻面：高细分矩形按原石轮廓裁剪三角形
+// 关键：只删除轮廓外的三角形，绝不把顶点压下去——
+// 压顶点会在边缘拉出垂直三角面，法线水平朝外，被打光成「尖刺」，整块砚台会烂掉
 export function createRawStoneCarvePlane(
   stone: RawStone,
   width: number,
@@ -429,16 +461,27 @@ export function createRawStoneCarvePlane(
   segX: number,
   segY: number,
 ) {
-  const raw = createRawStoneShape(stone)
+  const { scaleX, scaleY } = rawScale(stone)
   const geometry = new THREE.PlaneGeometry(width, height, segX, segY)
   const position = geometry.attributes.position as THREE.BufferAttribute
+  const limitScale = 0.97
+
+  // 把轮廓外的顶点「吸附」到轮廓边界上，而不是删掉它们。
+  // 删除三角形会留下顶点在轮廓外的三角形，那些顶点会采样到高度图边缘的极值，
+  // 相邻顶点位移相差数倍，沿轮廓一圈被拉成锯齿尖刺——这正是之前砚台烂掉的原因。
+  // 吸附后整块曲面平滑收成随形，边缘完整、无拉伸。
   for (let i = 0; i < position.count; i += 1) {
     const x = position.getX(i)
     const yPlane = position.getY(i)
-    // 铺平后世界 XZ 坐标 = (x, -yPlane)
-    if (!pointInShape(raw, x, -yPlane)) {
-      // rotateX(-PI/2) 后世界高度 = 顶点 z 坐标，压到 -0.7 藏进石沿之下
-      position.setZ(i, -0.7)
+    const nx = x / scaleX
+    const ny = -yPlane / scaleY
+    const radius = Math.hypot(nx, ny)
+    if (radius < 1e-6) continue
+    const limit = rawRadius(stone, Math.atan2(ny, nx)) * limitScale
+    if (radius > limit) {
+      const k = limit / radius
+      position.setX(i, x * k)
+      position.setY(i, yPlane * k)
     }
   }
   position.needsUpdate = true

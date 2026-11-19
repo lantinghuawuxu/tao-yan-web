@@ -8,6 +8,7 @@ import {
 } from '@react-three/drei'
 import * as THREE from 'three'
 import {
+  createRawStoneBase,
   createRawStoneCarvePlane,
   createRawStoneRim,
   createShape,
@@ -15,6 +16,7 @@ import {
   type InkstonePattern,
 } from './inkstoneGeometry'
 import {
+  STONE_DEEP,
   useGreenStoneTexture,
   type StoneVariant,
 } from './useGreenStoneTexture'
@@ -40,7 +42,7 @@ const PATTERN_HEIGHT_SRC: Record<InkstonePattern, string> = {
 }
 
 // 砚池缩放：createShape 的砚池尺寸为完整砚台设计，缩放到 2.6×1.6 雕刻面内
-const POOL_SCALE = 0.68
+const POOL_SCALE = 0.44
 
 function getCarvePools(stone: StoneVariant) {
   return createShape(STONE_SHAPE[stone]).pools.map((pool) => {
@@ -51,113 +53,53 @@ function getCarvePools(stone: StoneVariant) {
   })
 }
 
-function roundedRectPath(
-  context: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  radius: number,
+function createGuideTextureSource(
+  heightImage: HTMLImageElement,
+  scale = 1,
 ) {
-  const x = -width / 2
-  const y = -height / 2
-  const r = Math.min(radius, width / 2, height / 2)
-  context.beginPath()
-  context.moveTo(x + r, y)
-  context.lineTo(x + width - r, y)
-  context.quadraticCurveTo(x + width, y, x + width, y + r)
-  context.lineTo(x + width, y + height - r)
-  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
-  context.lineTo(x + r, y + height)
-  context.quadraticCurveTo(x, y + height, x, y + height - r)
-  context.lineTo(x, y + r)
-  context.quadraticCurveTo(x, y, x + r, y)
-  context.closePath()
-}
-
-function createGuideTexture(pattern: InkstonePattern, patternScale = 1) {
   const canvas = document.createElement('canvas')
   canvas.width = CANVAS_SIZE
   canvas.height = CANVAS_SIZE
   const context = canvas.getContext('2d')
   if (!context) return null
-
-  const scaleX = (CANVAS_SIZE / GUIDE_WIDTH) * patternScale
-  const scaleY = (CANVAS_SIZE / GUIDE_HEIGHT) * patternScale
-  context.setTransform(
-    scaleX,
-    0,
-    0,
-    -scaleY,
-    CANVAS_SIZE / 2,
-    CANVAS_SIZE / 2,
-  )
-  context.strokeStyle = 'rgba(199, 168, 107, 0.9)'
-  context.lineWidth = 0.012
-  context.lineCap = 'round'
-  context.lineJoin = 'round'
-
-  roundedRectPath(context, 2.2, 1.2, 0.18)
-  context.stroke()
-  roundedRectPath(context, 2.0, 1.02, 0.16)
-  context.stroke()
-
-  if (pattern === 'lotus') {
-    for (let i = 0; i < 10; i += 1) {
-      const angle = (i / 10) * Math.PI * 2
-      context.save()
-      context.translate(Math.cos(angle) * 0.85, Math.sin(angle) * 0.52)
-      context.rotate(angle + Math.PI / 2)
-      context.beginPath()
-      context.ellipse(0, 0, 0.055, 0.13, 0, 0, Math.PI * 2)
-      context.stroke()
-      context.restore()
-    }
-  } else if (pattern === 'cloud') {
-    for (let i = 0; i < 12; i += 1) {
-      const angle = (i / 12) * Math.PI * 2
-      context.beginPath()
-      context.arc(
-        Math.cos(angle) * 0.85,
-        Math.sin(angle) * 0.52,
-        0.12,
-        angle,
-        angle + Math.PI * 1.1,
-      )
-      context.stroke()
-    }
-  } else if (pattern === 'wave') {
-    for (let ring = 0; ring < 3; ring += 1) {
-      const rx = 0.55 + ring * 0.15
-      const ry = 0.35 + ring * 0.1
-      context.beginPath()
-      for (let step = 0; step <= 64; step += 1) {
-        const angle = (step / 64) * Math.PI * 2
-        const wobble = 1 + Math.sin(angle * 8 + ring * 1.2) * 0.025
-        const x = Math.cos(angle) * rx * wobble
-        const y = Math.sin(angle) * ry * wobble
-        if (step === 0) context.moveTo(x, y)
-        else context.lineTo(x, y)
-      }
-      context.closePath()
-      context.stroke()
-    }
-  } else {
-    for (let i = 0; i < 10; i += 1) {
-      const angle = (i / 10) * Math.PI * 2
-      context.save()
-      context.translate(Math.cos(angle) * 0.85, Math.sin(angle) * 0.52)
-      context.rotate(angle + Math.PI / 2)
-      context.beginPath()
-      context.moveTo(-0.07, -0.07)
-      context.lineTo(0.07, -0.07)
-      context.lineTo(0.07, 0.07)
-      context.lineTo(-0.03, 0.07)
-      context.lineTo(-0.03, 0)
-      context.lineTo(0.02, 0)
-      context.stroke()
-      context.restore()
+  const drawSize = CANVAS_SIZE * scale
+  const offset = (CANVAS_SIZE - drawSize) / 2
+  context.fillStyle = '#808080'
+  context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
+  context.drawImage(heightImage, offset, offset, drawSize, drawSize)
+  const source = context.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE)
+  const out = context.createImageData(CANVAS_SIZE, CANVAS_SIZE)
+  const size = CANVAS_SIZE
+  const gray = new Float32Array(size * size)
+  for (let i = 0; i < gray.length; i += 1) {
+    gray[i] = source.data[i * 4] / 255
+  }
+  // 引导线 = 从真实纹样高度图提取的刀路：
+  // 反相后白=凹=要下刀的沟槽，取其边缘 + 主体描成金色刻线稿
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = y * size + x
+      const x0 = x > 0 ? index - 1 : index
+      const x1 = x < size - 1 ? index + 1 : index
+      const y0 = y > 0 ? index - size : index
+      const y1 = y < size - 1 ? index + size : index
+      const gx = gray[x1] - gray[x0]
+      const gy = gray[y1] - gray[y0]
+      const edge = Math.min(1, Math.hypot(gx, gy) * 9)
+      // 只描刀路「轮廓」，不要填充凹槽区域本身——
+      // 高度图里凹槽面积很大，按区域点亮会把整块石面刷成金色
+      const alpha = Math.min(1, edge * 0.82)
+      const target = index * 4
+      // 关键：emissiveMap 只乘 RGB、忽略 alpha。
+      // 若透明区域仍保留金色 RGB，整块石面都会被刷上一层金光（米黄）。
+      // 所以这里按 alpha 预乘 RGB，透明处变纯黑。
+      out.data[target] = Math.round(214 * alpha)
+      out.data[target + 1] = Math.round(181 * alpha)
+      out.data[target + 2] = Math.round(118 * alpha)
+      out.data[target + 3] = Math.round(alpha * 205)
     }
   }
-
+  context.putImageData(out, 0, 0)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   texture.anisotropy = 8
@@ -165,166 +107,69 @@ function createGuideTexture(pattern: InkstonePattern, patternScale = 1) {
   return { texture, canvas }
 }
 
-// 雕刻露出的「深层石色」——真实雕刻是削去表层、露出内部更深更润的石色
-const CARVE_REVEAL: Record<StoneVariant, string> = {
-  green: 'rgba(20, 44, 37, ',
-  yellow: 'rgba(46, 56, 34, ',
-  purple: 'rgba(56, 36, 52, ',
-}
-
-// 在砚池周围生成纹样浮雕（高度图语义：白=凹、黑=凸，已 setTransform 到世界坐标）
-function drawPatternRelief(
-  context: CanvasRenderingContext2D,
-  pattern: InkstonePattern,
-  pools: THREE.Shape[],
-  stone: StoneVariant,
+// 从高度图生成「刻痕遮罩 / 刻痕 AO」贴图：
+// R = 刻痕遮罩（凹下去多少，0~1）
+// G = 刻痕 AO（相对周围越凹，遮蔽越强）
+// 这两张通道交给 shader 混合，让刻痕是「石头的颜色变深 + 凹处变暗」，
+// 而不是往石面上贴一块半透明的深色图片（那正是「涂鸦感」的来源）
+function rebuildCarveMask(
+  heightCanvas: HTMLCanvasElement,
+  maskCanvas: HTMLCanvasElement,
 ) {
-  const pool = pools[0]
-  const points = pool.getPoints(64)
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-  for (const point of points) {
-    minX = Math.min(minX, point.x)
-    maxX = Math.max(maxX, point.x)
-    minY = Math.min(minY, point.y)
-    maxY = Math.max(maxY, point.y)
-  }
-  const rx = (maxX - minX) / 2
-  const ry = (maxY - minY) / 2
+  const heightContext = heightCanvas.getContext('2d')
+  const maskContext = maskCanvas.getContext('2d')
+  if (!heightContext || !maskContext) return
 
-  context.lineJoin = 'round'
-  context.lineCap = 'round'
+  const sw = heightCanvas.width
+  const sh = heightCanvas.height
+  const dw = maskCanvas.width
+  const dh = maskCanvas.height
+  const source = heightContext.getImageData(0, 0, sw, sh)
+  const gray = new Float32Array(sw * sh)
+  for (let i = 0; i < sw * sh; i += 1) {
+    gray[i] = source.data[i * 4] / 255
+  }
+  const target = maskContext.createImageData(dw, dh)
+  const stepX = sw / dw
+  const stepY = sh / dh
+  const radius = 5
 
-  // 石膘凸起：黄膘 / 紫石在浮雕带外散布天然石膘斑块（凸起，不雕）
-  if (stone === 'yellow' || stone === 'purple') {
-    context.fillStyle = '#000000'
-    for (let i = 0; i < 5; i += 1) {
-      const angle = (i / 5) * Math.PI * 2 + 0.7
-      const cx = Math.cos(angle) * (rx * 1.9 + rx * 0.5)
-      const cy = Math.sin(angle) * (ry * 1.9 + ry * 0.5)
-      context.beginPath()
-      context.ellipse(cx, cy, rx * 0.3, ry * 0.24, angle, 0, Math.PI * 2)
-      context.fill()
+  for (let y = 0; y < dh; y += 1) {
+    for (let x = 0; x < dw; x += 1) {
+      const sx = Math.min(sw - 1, Math.floor(x * stepX))
+      const sy = Math.min(sh - 1, Math.floor(y * stepY))
+      const height = gray[sy * sw + sx]
+      const carve = Math.min(1, Math.max(0, (height - 0.5) * 2.6))
+
+      let sum = 0
+      let count = 0
+      for (let dy = -radius; dy <= radius; dy += 2) {
+        for (let dx = -radius; dx <= radius; dx += 2) {
+          const nx = Math.min(sw - 1, Math.max(0, sx + dx))
+          const ny = Math.min(sh - 1, Math.max(0, sy + dy))
+          sum += gray[ny * sw + nx]
+          count += 1
+        }
+      }
+      const average = sum / count
+      const occlusion = Math.min(1, Math.max(0, (height - average) * 5.2))
+      const ao = 1 - occlusion * 0.85
+
+      const index = (y * dw + x) * 4
+      target.data[index] = Math.round(carve * 255)
+      target.data[index + 1] = Math.round(ao * 255)
+      target.data[index + 2] = Math.round(carve * 255)
+      target.data[index + 3] = 255
     }
   }
-
-  if (pattern === 'lotus') {
-    // 莲纹：8 片大花瓣（凸起）绕砚池，白勾边 + 中脊线
-    const petals = 8
-    for (let i = 0; i < petals; i += 1) {
-      const angle = (i / petals) * Math.PI * 2 + Math.PI / petals
-      const cx = Math.cos(angle) * rx * 1.45
-      const cy = Math.sin(angle) * ry * 1.45
-      context.save()
-      context.translate(cx, cy)
-      context.rotate(angle + Math.PI / 2)
-      context.beginPath()
-      context.ellipse(0, 0, rx * 0.32, ry * 0.28, 0, 0, Math.PI * 2)
-      context.fillStyle = '#000000'
-      context.fill()
-      context.lineWidth = 0.02
-      context.strokeStyle = '#ffffff'
-      context.stroke()
-      // 花瓣中脊线（阴刻，增强莲瓣立体感）
-      context.beginPath()
-      context.moveTo(0, -ry * 0.28)
-      context.lineTo(0, ry * 0.28)
-      context.lineWidth = 0.014
-      context.stroke()
-      context.restore()
-    }
-    // 外圈刻线（花瓣外缘）
-    context.beginPath()
-    context.ellipse(0, 0, rx * 1.72, ry * 1.72, 0, 0, Math.PI * 2)
-    context.lineWidth = 0.02
-    context.strokeStyle = '#ffffff'
-    context.stroke()
-  } else if (pattern === 'cloud') {
-    // 云纹：一圈卷云（如意云头，凸起）+ 白勾边
-    const count = 10
-    for (let i = 0; i < count; i += 1) {
-      const angle = (i / count) * Math.PI * 2
-      const cx = Math.cos(angle) * rx * 1.45
-      const cy = Math.sin(angle) * ry * 1.45
-      context.save()
-      context.translate(cx, cy)
-      context.rotate(angle + Math.PI / 2)
-      context.beginPath()
-      context.arc(0, 0, ry * 0.46, -Math.PI * 0.55, Math.PI * 0.55)
-      context.arc(0, -ry * 0.16, ry * 0.3, Math.PI * 0.6, -Math.PI * 0.6, true)
-      context.closePath()
-      context.fillStyle = '#000000'
-      context.fill()
-      context.lineWidth = 0.02
-      context.strokeStyle = '#ffffff'
-      context.stroke()
-      context.restore()
-    }
-  } else if (pattern === 'wave') {
-    // 水波：黑色凸起环 + 白色刻线环交替（起伏的涟漪）
-    for (let ring = 0; ring < 3; ring += 1) {
-      const scale = 1.24 + ring * 0.26
-      const ringPoints = pool.getPoints(72)
-      // 黑色凸起环（粗）
-      context.beginPath()
-      ringPoints.forEach((point, index) => {
-        const x = point.x * scale
-        const y = point.y * scale
-        if (index === 0) context.moveTo(x, y)
-        else context.lineTo(x, y)
-      })
-      context.closePath()
-      context.lineWidth = 0.11
-      context.strokeStyle = '#000000'
-      context.stroke()
-      // 白色刻线环（细，叠在凸起环外缘）
-      context.beginPath()
-      ringPoints.forEach((point, index) => {
-        const x = point.x * (scale + 0.07)
-        const y = point.y * (scale + 0.07)
-        if (index === 0) context.moveTo(x, y)
-        else context.lineTo(x, y)
-      })
-      context.closePath()
-      context.lineWidth = 0.03
-      context.strokeStyle = '#ffffff'
-      context.stroke()
-    }
-  } else {
-    // 回纹：凸起方框带 + 白色内框刻线（「回」字嵌套）
-    const outerW = Math.max(rx * 1.6, 0.74)
-    const outerH = Math.max(ry * 1.6, 0.48)
-    const innerW = Math.max(rx * 1.1, 0.5)
-    const innerH = Math.max(ry * 1.1, 0.28)
-    // 凸起方框带（黑，evenodd 挖空内部）
-    context.fillStyle = '#000000'
-    context.beginPath()
-    context.rect(-outerW, -outerH, outerW * 2, outerH * 2)
-    context.moveTo(-innerW, innerH)
-    context.lineTo(-innerW, -innerH)
-    context.lineTo(innerW, -innerH)
-    context.lineTo(innerW, innerH)
-    context.lineTo(-innerW, innerH)
-    context.closePath()
-    context.fill('evenodd')
-    // 白色内框刻线（「回」字内圈，阴刻）
-    const midW = (innerW + outerW) / 2
-    const midH = (innerH + outerH) / 2
-    context.beginPath()
-    context.rect(-midW, -midH, midW * 2, midH * 2)
-    context.lineWidth = 0.026
-    context.strokeStyle = '#ffffff'
-    context.stroke()
-  }
+  maskContext.putImageData(target, 0, 0)
 }
 
 // 从高度图实时重算法线（让凹槽有正确立体光影，这是「雕刻」与「涂鸦」的关键区别）
 function updateNormalMap(
   heightCanvas: HTMLCanvasElement,
   normalCanvas: HTMLCanvasElement,
-  strength = 2.2,
+  strength = 1.2,
 ) {
   const heightContext = heightCanvas.getContext('2d')
   const normalContext = normalCanvas.getContext('2d')
@@ -335,32 +180,53 @@ function updateNormalMap(
   const dw = normalCanvas.width
   const dh = normalCanvas.height
   const source = heightContext.getImageData(0, 0, sw, sh)
-  const gray = new Float32Array(sw * sh)
+  const full = new Float32Array(sw * sh)
   for (let i = 0; i < sw * sh; i += 1) {
-    gray[i] = source.data[i * 4] / 255
+    full[i] = source.data[i * 4] / 255
+  }
+  // 平均降采样：点采样会把高频噪点原样带进法线，形成密密麻麻的尖刺
+  const gray = new Float32Array(dw * dh)
+  const ratioX = sw / dw
+  const ratioY = sh / dh
+  for (let y = 0; y < dh; y += 1) {
+    for (let x = 0; x < dw; x += 1) {
+      let sum = 0
+      let count = 0
+      const startX = Math.floor(x * ratioX)
+      const startY = Math.floor(y * ratioY)
+      const endX = Math.min(sw, Math.floor((x + 1) * ratioX))
+      const endY = Math.min(sh, Math.floor((y + 1) * ratioY))
+      for (let sy = startY; sy < endY; sy += 1) {
+        for (let sx = startX; sx < endX; sx += 1) {
+          sum += full[sy * sw + sx]
+          count += 1
+        }
+      }
+      gray[y * dw + x] = count > 0 ? sum / count : full[startY * sw + startX]
+    }
   }
   const target = normalContext.createImageData(dw, dh)
 
   for (let y = 0; y < dh; y += 1) {
     for (let x = 0; x < dw; x += 1) {
-      const sx = Math.floor((x / dw) * sw)
-      const sy = Math.floor((y / dh) * sh)
+      const sx = x
+      const sy = y
       const x0 = Math.max(0, sx - 1)
-      const x1 = Math.min(sw - 1, sx + 1)
+      const x1 = Math.min(dw - 1, sx + 1)
       const y0 = Math.max(0, sy - 1)
-      const y1 = Math.min(sh - 1, sy + 1)
+      const y1 = Math.min(dh - 1, sy + 1)
       const gx =
-        gray[y0 * sw + x0] -
-        gray[y0 * sw + x1] +
-        2 * (gray[sy * sw + x0] - gray[sy * sw + x1]) +
-        gray[y1 * sw + x0] -
-        gray[y1 * sw + x1]
+        gray[y0 * dw + x0] -
+        gray[y0 * dw + x1] +
+        2 * (gray[sy * dw + x0] - gray[sy * dw + x1]) +
+        gray[y1 * dw + x0] -
+        gray[y1 * dw + x1]
       const gy =
-        gray[y0 * sw + x0] -
-        gray[y1 * sw + x0] +
-        2 * (gray[y0 * sw + sx] - gray[y1 * sw + sx]) +
-        gray[y0 * sw + x1] -
-        gray[y1 * sw + x1]
+        gray[y0 * dw + x0] -
+        gray[y1 * dw + x0] +
+        2 * (gray[y0 * dw + sx] - gray[y1 * dw + sx]) +
+        gray[y0 * dw + x1] -
+        gray[y1 * dw + x1]
       const nx = -gx * strength
       const ny = -gy * strength
       const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1)
@@ -416,13 +282,6 @@ function CarveSurface({
     }
   }, [pattern])
 
-  const colorCanvas = useMemo(() => {
-    const canvas = document.createElement('canvas')
-    canvas.width = CANVAS_SIZE
-    canvas.height = CANVAS_SIZE
-    return canvas
-  }, [])
-
   const heightTexture = useMemo(() => {
     const texture = new THREE.CanvasTexture(heightCanvas)
     texture.wrapS = THREE.ClampToEdgeWrapping
@@ -432,19 +291,40 @@ function CarveSurface({
     return texture
   }, [heightCanvas])
 
-  const colorTexture = useMemo(() => {
-    const texture = new THREE.CanvasTexture(colorCanvas)
+  // 刻痕遮罩（R=刻痕量, G=刻痕AO），交给 shader 与石纹照片混合
+  const carveMaskCanvas = useMemo(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = CANVAS_SIZE
+    canvas.height = CANVAS_SIZE
+    return canvas
+  }, [])
+
+  const carveMaskTexture = useMemo(() => {
+    const texture = new THREE.CanvasTexture(carveMaskCanvas)
     texture.wrapS = THREE.ClampToEdgeWrapping
     texture.wrapT = THREE.ClampToEdgeWrapping
-    texture.colorSpace = THREE.SRGBColorSpace
+    texture.colorSpace = THREE.NoColorSpace
     texture.needsUpdate = true
     return texture
-  }, [colorCanvas])
+  }, [carveMaskCanvas])
 
-  const guide = useMemo(
-    () => createGuideTexture(pattern, patternScale),
-    [pattern, patternScale],
-  )
+  // 引导线：直接从真实纹样高度图提取的刀路，不再是几条程序化直线
+  const [guide, setGuide] = useState<{
+    texture: THREE.Texture
+    canvas: HTMLCanvasElement
+  } | null>(null)
+
+  useEffect(() => {
+    if (!patternImg) {
+      setGuide(null)
+      return
+    }
+    const next = createGuideTextureSource(patternImg, patternScale)
+    setGuide(next)
+    return () => {
+      next?.texture.dispose()
+    }
+  }, [patternImg, patternScale])
 
   const normalCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -463,23 +343,19 @@ function CarveSurface({
   }, [normalCanvas])
 
   const geometry = useMemo(
-    () => createRawStoneCarvePlane(stone, GUIDE_WIDTH, GUIDE_HEIGHT, 240, 180),
-    [stone],
-  )
-
-  const poolGeometries = useMemo(
-    () => getCarvePools(stone).map((pool) => new THREE.ShapeGeometry(pool)),
+    () => createRawStoneCarvePlane(stone, GUIDE_WIDTH, GUIDE_HEIGHT, 420, 280),
     [stone],
   )
 
   const bodyGeometry = useMemo(() => createRawStoneRim(stone), [stone])
+  const baseGeometry = useMemo(() => createRawStoneBase(stone), [stone])
 
   const stonePBR = useGreenStoneTexture(stone, 2)
   const stoneNormalScale = useMemo(() => new THREE.Vector2(0.7, 0.7), [])
-  const carveNormalScale = useMemo(() => new THREE.Vector2(1.1, 1.1), [])
+  const carveNormalScale = useMemo(() => new THREE.Vector2(0.55, 0.55), [])
 
   const heightTextureRef = useRef(heightTexture)
-  const colorTextureRef = useRef(colorTexture)
+  const carveMaskTextureRef = useRef(carveMaskTexture)
   const normalTextureRef = useRef(normalTexture)
   const drawingRef = useRef(false)
   const lastUvRef = useRef<THREE.Vector2 | null>(null)
@@ -487,9 +363,9 @@ function CarveSurface({
 
   useEffect(() => {
     heightTextureRef.current = heightTexture
-    colorTextureRef.current = colorTexture
+    carveMaskTextureRef.current = carveMaskTexture
     normalTextureRef.current = normalTexture
-  }, [heightTexture, colorTexture, normalTexture])
+  }, [heightTexture, carveMaskTexture, normalTexture])
 
   useEffect(() => {
     updateNormalMap(heightCanvas, normalCanvas)
@@ -509,26 +385,38 @@ function CarveSurface({
     context.fillStyle = '#808080'
     context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
 
-    // 2. 纹样浮雕（真实照片构图）；图未加载时用程序化浮雕兜底
+    // 2. 纹样浮雕（真实照片构图）；图未就绪时保持纯石面，绝不回退成程序化线条
     if (patternImg) {
+      // AI 生成的浮雕图带有高频噪点，直接当位移图会把每个噪点变成一个尖刺，
+      // 整块磨平面会炸成「毛刺」。先做一次高斯模糊，只保留浮雕的大形。
+      context.filter = 'blur(5px)'
       context.drawImage(patternImg, 0, 0, CANVAS_SIZE, CANVAS_SIZE)
-    } else {
-      context.setTransform(
-        scaleX,
-        0,
-        0,
-        -scaleY,
-        CANVAS_SIZE / 2,
-        CANVAS_SIZE / 2,
-      )
-      drawPatternRelief(context, pattern, pools, stone)
+      context.filter = 'none'
     }
 
-    // 3. 砚池深坑（白=凹，覆盖中央）
+    // 3. 砚池深坑（白=凹）：用柔边径向渐变，让池壁自然过渡，
+    //    硬边纯白会把中心纹样整片抹平
     context.setTransform(scaleX, 0, 0, -scaleY, CANVAS_SIZE / 2, CANVAS_SIZE / 2)
-    context.fillStyle = '#ffffff'
     for (const pool of pools) {
       const points = pool.getPoints(64)
+      let minX = Infinity
+      let maxX = -Infinity
+      let minY = Infinity
+      let maxY = -Infinity
+      for (const point of points) {
+        minX = Math.min(minX, point.x)
+        maxX = Math.max(maxX, point.x)
+        minY = Math.min(minY, point.y)
+        maxY = Math.max(maxY, point.y)
+      }
+      const cx = (minX + maxX) / 2
+      const cy = (minY + maxY) / 2
+      const radius = Math.max(maxX - minX, maxY - minY) / 2
+      const poolGradient = context.createRadialGradient(cx, cy, radius * 0.2, cx, cy, radius)
+      poolGradient.addColorStop(0, '#ffffff')
+      poolGradient.addColorStop(0.72, '#f2f2f2')
+      poolGradient.addColorStop(1, '#808080')
+      context.fillStyle = poolGradient
       context.beginPath()
       points.forEach((point, index) => {
         if (index === 0) context.moveTo(point.x, point.y)
@@ -541,32 +429,36 @@ function CarveSurface({
     heightTextureRef.current.needsUpdate = true
     updateNormalMap(heightCanvas, normalCanvas)
     normalTextureRef.current.needsUpdate = true
-  }, [patternImg, pattern, stone, heightCanvas, normalCanvas, normalTexture])
+    rebuildCarveMask(heightCanvas, carveMaskCanvas)
+    carveMaskTextureRef.current.needsUpdate = true
+  }, [
+    patternImg,
+    pattern,
+    stone,
+    heightCanvas,
+    normalCanvas,
+    normalTexture,
+    carveMaskCanvas,
+  ])
 
   useEffect(() => () => geometry.dispose(), [geometry])
   useEffect(() => () => heightTexture.dispose(), [heightTexture])
-  useEffect(() => () => colorTexture.dispose(), [colorTexture])
   useEffect(() => () => normalTexture.dispose(), [normalTexture])
-  useEffect(() => () => guide?.texture.dispose(), [guide])
-  useEffect(
-    () => () => {
-      for (const pool of poolGeometries) pool.dispose()
-    },
-    [poolGeometries],
-  )
+  useEffect(() => () => carveMaskTexture.dispose(), [carveMaskTexture])
   useEffect(() => () => bodyGeometry.dispose(), [bodyGeometry])
+  useEffect(() => () => baseGeometry.dispose(), [baseGeometry])
 
   const paint = (uv: THREE.Vector2) => {
     const heightContext = heightCanvas.getContext('2d')
-    const colorContext = colorCanvas.getContext('2d')
-    if (!heightContext || !colorContext) return
+    if (!heightContext) return
 
     const x = uv.x * CANVAS_SIZE
     const y = (1 - uv.y) * CANVAS_SIZE
-    const baseRadius =
-      Math.max(10, brushSize * 1.2) *
-      (tool === 'fine' ? 0.5 : tool === 'polish' ? 1.6 : 1)
-    const baseAlpha = tool === 'polish' ? 0.12 : tool === 'fine' ? 0.4 : 0.28
+    const toolScale = tool === 'fine' ? 0.55 : tool === 'polish' ? 1.75 : 1
+    const baseRadius = Math.max(9, brushSize * 1.15) * toolScale
+    // 每种刀的目标深度：用「不透明目标灰度」落到石面，
+    // 同一处刻到目标深度后不再加深——这才是凿刻，而不是无限叠加变白
+    const targetDepth = tool === 'chisel' ? 234 : tool === 'fine' ? 214 : 140
 
     const stamp = (
       stampX: number,
@@ -576,88 +468,68 @@ function CarveSurface({
       pressure: number,
     ) => {
       const radius = baseRadius * (tool === 'polish' ? 1 : pressure)
-      const alpha = Math.min(1, baseAlpha * pressure)
       const angle = Math.atan2(dirY, dirX)
+      const depth = Math.round(targetDepth * Math.min(1, 0.87 + pressure * 0.13))
 
       heightContext.save()
       heightContext.translate(stampX, stampY)
       heightContext.rotate(angle)
+      heightContext.globalCompositeOperation = 'source-over'
 
       if (tool === 'chisel') {
-        // 楔形 V 槽：沿刀口方向拉伸成刃，垂直方向线性渐变做出「中间深、两侧浅」的 V 形
-        const length = radius * 2.2
-        const width = radius * 0.5
+        // 楔形 V 槽：刃口中间最深、两侧抬起，两端收成刀尖
+        const length = radius * 2.4
+        const width = radius * 0.62
         const vGradient = heightContext.createLinearGradient(0, -width, 0, width)
-        vGradient.addColorStop(0, 'rgba(255, 255, 255, 0)')
-        vGradient.addColorStop(0.5, `rgba(255, 255, 255, ${alpha})`)
-        vGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+        vGradient.addColorStop(0, 'rgba(255,255,255,0)')
+        vGradient.addColorStop(0.28, `rgba(${depth},${depth},${depth},0.88)`)
+        vGradient.addColorStop(0.5, `rgba(${depth},${depth},${depth},1)`)
+        vGradient.addColorStop(0.72, `rgba(${depth},${depth},${depth},0.88)`)
+        vGradient.addColorStop(1, 'rgba(255,255,255,0)')
         heightContext.fillStyle = vGradient
         heightContext.beginPath()
         heightContext.ellipse(0, 0, length, width, 0, 0, Math.PI * 2)
         heightContext.fill()
       } else if (tool === 'fine') {
-        // 窄 U 槽：硬边、短刃
-        const length = radius * 1.5
-        const width = radius * 0.7
-        const uGradient = heightContext.createRadialGradient(
-          0,
-          0,
-          0,
-          0,
-          0,
-          width,
-        )
-        uGradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`)
-        uGradient.addColorStop(0.7, `rgba(255, 255, 255, ${alpha * 0.9})`)
-        uGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+        // 窄 U 槽：硬边、短刃，两端收尖（阴刻线）
+        const length = radius * 1.7
+        const width = radius * 0.82
+        const uGradient = heightContext.createRadialGradient(0, 0, 0, 0, 0, width)
+        uGradient.addColorStop(0, `rgba(${depth},${depth},${depth},1)`)
+        uGradient.addColorStop(0.62, `rgba(${depth},${depth},${depth},0.92)`)
+        uGradient.addColorStop(1, 'rgba(255,255,255,0)')
         heightContext.fillStyle = uGradient
         heightContext.beginPath()
         heightContext.ellipse(0, 0, length, width, 0, 0, Math.PI * 2)
         heightContext.fill()
       } else {
-        // polish 软高斯柔化
-        const softGradient = heightContext.createRadialGradient(
-          0,
-          0,
-          0,
-          0,
-          0,
-          radius,
-        )
-        softGradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`)
-        softGradient.addColorStop(0.4, `rgba(255, 255, 255, ${alpha * 0.6})`)
-        softGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+        // 打磨：以石面基准灰柔和回填，压掉毛刺、保留大起伏
+        const softGradient = heightContext.createRadialGradient(0, 0, 0, 0, 0, radius)
+        softGradient.addColorStop(0, 'rgba(137,137,137,0.9)')
+        softGradient.addColorStop(0.55, 'rgba(139,139,139,0.5)')
+        softGradient.addColorStop(1, 'rgba(140,140,140,0)')
         heightContext.fillStyle = softGradient
         heightContext.beginPath()
         heightContext.arc(0, 0, radius, 0, Math.PI * 2)
         heightContext.fill()
       }
+
+      // 崩口：石质脆性剥落，沿刃口撒几粒碎屑，避免过于「塑料圆润」
+      if (tool !== 'polish') {
+        for (let i = 0; i < 3; i += 1) {
+          const chipX = (Math.random() - 0.5) * radius * 2.5
+          const chipY = (Math.random() - 0.5) * radius * 1.3
+          const chipR = radius * (0.045 + Math.random() * 0.085)
+          heightContext.globalCompositeOperation = 'source-over'
+          heightContext.fillStyle = `rgba(${depth},${depth},${depth},0.92)`
+          heightContext.beginPath()
+          heightContext.arc(chipX, chipY, chipR, 0, Math.PI * 2)
+          heightContext.fill()
+        }
+      }
+
       heightContext.restore()
-
-      const colorAlpha = tool === 'polish' ? 0.12 : tool === 'fine' ? 0.32 : 0.42
-      const colorRadius = radius * 0.85
-      const colorGradient = colorContext.createRadialGradient(
-        stampX,
-        stampY,
-        0,
-        stampX,
-        stampY,
-        colorRadius,
-      )
-      const reveal = CARVE_REVEAL[stone]
-      colorGradient.addColorStop(0, `${reveal}${colorAlpha})`)
-      colorGradient.addColorStop(0.65, `${reveal}${colorAlpha * 0.55})`)
-      colorGradient.addColorStop(1, `${reveal}0)`)
-      colorContext.fillStyle = colorGradient
-      colorContext.beginPath()
-      colorContext.arc(stampX, stampY, colorRadius, 0, Math.PI * 2)
-      colorContext.fill()
     }
-
-    heightContext.save()
-    heightContext.globalCompositeOperation = 'lighter'
-    colorContext.save()
-    colorContext.globalCompositeOperation = 'source-over'
 
     if (lastUvRef.current) {
       const lastX = lastUvRef.current.x * CANVAS_SIZE
@@ -667,17 +539,17 @@ function CarveSurface({
       const distance = Math.hypot(dx, dy)
       const dirX = distance > 0 ? dx / distance : 1
       const dirY = distance > 0 ? dy / distance : 0
-      // 速度压力：慢刀重、快刀轻
-      const pressure = Math.max(0.6, Math.min(1.15, 1.3 - distance / 40))
+      // 慢刀重、快刀轻
+      const pressure = Math.max(0.55, Math.min(1.2, 1.35 - distance / 36))
       const steps = Math.max(
         1,
-        Math.ceil(distance / Math.max(2, baseRadius * 0.18)),
+        Math.ceil(distance / Math.max(2, baseRadius * 0.16)),
       )
       for (let step = 1; step <= steps; step += 1) {
         const progress = step / steps
-        // 顿挫：刻刀/细刻走刀时沿垂直方向轻微摆动，模拟手工刀痕
+        // 走刀顿挫：沿垂直方向轻微摆动，模拟手工刀痕
         const jitter =
-          tool === 'polish' ? 0 : (Math.random() - 0.5) * baseRadius * 0.3
+          tool === 'polish' ? 0 : (Math.random() - 0.5) * baseRadius * 0.22
         stamp(
           lastX + dx * progress - jitter * dirY,
           lastY + dy * progress + jitter * dirX,
@@ -690,74 +562,163 @@ function CarveSurface({
       stamp(x, y, 1, 0, 1)
     }
 
-    heightContext.restore()
-    colorContext.restore()
     lastUvRef.current = uv.clone()
 
-    // 辅助线「刻到哪消失到哪」：即时擦除刻痕区域的引导线
+    // 辅助线「刻到哪消失到哪」
     const guideContext = guide?.canvas.getContext('2d')
     if (guideContext) {
-      guideContext.clearRect(
-        x - baseRadius,
-        y - baseRadius,
-        baseRadius * 2,
-        baseRadius * 2,
-      )
+      guideContext.save()
+      guideContext.globalCompositeOperation = 'destination-out'
+      guideContext.beginPath()
+      guideContext.arc(x, y, baseRadius * 1.2, 0, Math.PI * 2)
+      guideContext.fill()
+      guideContext.restore()
     }
 
-    // 节流上传（每帧最多一次）：高度/颜色/辅助线/法线统一批量 needsUpdate，
-    // 避免 pointermove 高频全量重传 1024² 纹理，移动端不卡
+    // 节流上传（每帧最多一次）：高度/法线/刻痕遮罩批量重算
     if (!normalUpdatePendingRef.current) {
       normalUpdatePendingRef.current = true
       requestAnimationFrame(() => {
         normalUpdatePendingRef.current = false
         heightTextureRef.current.needsUpdate = true
-        colorTextureRef.current.needsUpdate = true
         if (guide?.texture) guide.texture.needsUpdate = true
         updateNormalMap(heightCanvas, normalCanvas)
         normalTextureRef.current.needsUpdate = true
+        rebuildCarveMask(heightCanvas, carveMaskCanvas)
+        carveMaskTextureRef.current.needsUpdate = true
       })
     }
   }
 
-  // —— 撤销：每次下刀前保存高度图/颜色图快照 ——
-  const historyRef = useRef<{ h: ImageData; c: ImageData }[]>([])
+
+  // —— 撤销：每次下刀前保存高度图快照 ——
+  const historyRef = useRef<ImageData[]>([])
 
   const snapshot = () => {
     const heightContext = heightCanvas.getContext('2d')
-    const colorContext = colorCanvas.getContext('2d')
-    if (!heightContext || !colorContext) return
-    historyRef.current.push({
-      h: heightContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE),
-      c: colorContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE),
-    })
-    if (historyRef.current.length > 20) historyRef.current.shift()
+    if (!heightContext) return
+    historyRef.current.push(
+      heightContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE),
+    )
+    if (historyRef.current.length > 24) historyRef.current.shift()
   }
 
   const undo = useCallback(() => {
     const last = historyRef.current.pop()
     if (!last) return
     const heightContext = heightCanvas.getContext('2d')
-    const colorContext = colorCanvas.getContext('2d')
-    if (!heightContext || !colorContext) return
-    heightContext.putImageData(last.h, 0, 0)
-    colorContext.putImageData(last.c, 0, 0)
+    if (!heightContext) return
+    heightContext.putImageData(last, 0, 0)
     heightTextureRef.current.needsUpdate = true
-    colorTextureRef.current.needsUpdate = true
     updateNormalMap(heightCanvas, normalCanvas)
     normalTextureRef.current.needsUpdate = true
-  }, [heightCanvas, colorCanvas, normalCanvas, normalTexture])
+    rebuildCarveMask(heightCanvas, carveMaskCanvas)
+    carveMaskTextureRef.current.needsUpdate = true
+  }, [heightCanvas, normalCanvas, normalTexture, carveMaskCanvas])
 
   useEffect(() => {
     onUndoReady?.(undo)
   }, [onUndoReady, undo])
 
+  // —— 雕刻面材质：石纹照片 + 位移高度 + 实时法线 + 刻痕深层色 + 刻痕 AO 合成在同一材质 ——
+  const carveMaterial = useMemo(
+    () =>
+      new THREE.MeshPhysicalMaterial({
+        // 基色由石料决定（下面按 stone 覆盖），压掉玛瑙贴图亮部的偏黄
+        color: 0xd2c2c8,
+        roughness: 0.44,
+        metalness: 0.02,
+        clearcoat: 0.3,
+        clearcoatRoughness: 0.42,
+      }),
+    [],
+  )
+
+  // 雕刻面单独用一份贴图：石沿的 repeat=2 会让纹理过密，
+  // 磨平面用更小的重复尺度才像同一块石头的延续
+  const carveMap = useMemo(() => {
+    const base = stonePBR.map
+    if (!base) return null
+    const cloned = base.clone()
+    cloned.wrapS = THREE.RepeatWrapping
+    cloned.wrapT = THREE.RepeatWrapping
+    cloned.repeat.set(1, 1)
+    cloned.offset.set(0, 0)
+    cloned.needsUpdate = true
+    return cloned
+  }, [stonePBR.map])
+
+  useEffect(() => () => carveMap?.dispose(), [carveMap])
+
+  useEffect(() => () => carveMaterial.dispose(), [carveMaterial])
+
+  useEffect(() => {
+    const material = carveMaterial
+    // 贴图已经统一着色到石料本色，这里不再二次叠色，否则会偏暗发灰
+    material.color.set(0xffffff)
+    material.map = carveMap ?? stonePBR.map
+    material.roughnessMap = stonePBR.roughnessMap
+    material.normalMap = normalTexture
+    material.normalScale.copy(carveNormalScale)
+    material.displacementMap = heightTexture
+    // 全部向下位移：石面基准比石沿低约 0.11，砚堂低于砚边的真实形制
+    material.displacementScale = -0.16
+    material.displacementBias = 0
+    material.emissive.set('#c8a86b')
+    material.emissiveMap = showGuide && guide ? guide.texture : null
+    material.emissiveIntensity = showGuide && guide ? 0.34 : 0
+
+    const deepColor = new THREE.Color(STONE_DEEP[stone])
+    const maskTexture = carveMaskTexture
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.uCarveMask = { value: maskTexture }
+      shader.uniforms.uDeepColor = { value: deepColor }
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          'void main() {',
+          `uniform sampler2D uCarveMask;
+uniform vec3 uDeepColor;
+void main() {`,
+        )
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+  vec4 carveSample = texture2D(uCarveMask, vMapUv);
+  float carveAmount = carveSample.r;
+  float carveAO = carveSample.g;
+  vec3 deepStone = uDeepColor * (0.55 + 0.6 * carveAO);
+  diffuseColor.rgb = mix(diffuseColor.rgb, deepStone, carveAmount * 0.9);
+  diffuseColor.rgb *= mix(1.0, carveAO, carveAmount);`,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+  roughnessFactor = mix(roughnessFactor, 0.68, carveAmount * 0.7);`,
+        )
+    }
+    material.needsUpdate = true
+  }, [
+    carveMaterial,
+    carveMap,
+    stonePBR,
+    normalTexture,
+    heightTexture,
+    carveMaskTexture,
+    guide,
+    showGuide,
+    stone,
+    carveNormalScale,
+  ])
+
+
   return (
     <group rotation={[0.08, -0.25, 0.01]}>
+      {/* 雕刻面：位移 + 实时法线 + 石纹照片 + 刻痕混合，是「石头本身被凿开」而不是「石头上画了东西」 */}
       <mesh
         geometry={geometry}
+        material={carveMaterial}
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.2, 0]}
+        position={[0, 0.21, 0]}
         receiveShadow
         renderOrder={0}
         onPointerDown={(event) => {
@@ -783,41 +744,9 @@ function CarveSurface({
           drawingRef.current = false
           lastUvRef.current = null
         }}
-      >
-        <meshPhysicalMaterial
-          map={stonePBR.map}
-          normalMap={normalTexture}
-          roughnessMap={stonePBR.roughnessMap}
-          normalScale={carveNormalScale}
-          color="#ffffff"
-          roughness={0.42}
-          metalness={0.02}
-          clearcoat={0.28}
-          clearcoatRoughness={0.4}
-          displacementMap={heightTexture}
-          displacementScale={-0.2}
-          emissive="#ffffff"
-          emissiveMap={guide?.texture}
-          emissiveIntensity={showGuide ? 0.9 : 0}
-        />
-      </mesh>
+      />
 
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.201, 0]}
-        raycast={() => {}}
-        renderOrder={1}
-      >
-        <planeGeometry args={[GUIDE_WIDTH, GUIDE_HEIGHT]} />
-        <meshBasicMaterial
-          map={colorTexture}
-          transparent
-          depthWrite={false}
-          side={THREE.FrontSide}
-        />
-      </mesh>
-
-      {/* 砚身：圆角矩形砚边（边框），中央开口露出雕刻面 */}
+      {/* 砚身：原石石沿（天然随形边框），中央开口露出可雕刻的磨平面 */}
       <mesh
         geometry={bodyGeometry}
         position={[0, 0.21, 0]}
@@ -831,38 +760,39 @@ function CarveSurface({
           roughnessMap={stonePBR.roughnessMap}
           normalScale={stoneNormalScale}
           color="#ffffff"
-          roughness={0.32}
+          roughness={0.34}
           metalness={0.03}
           clearcoat={0.4}
           clearcoatRoughness={0.35}
         />
       </mesh>
 
-      {/* 砚池深色池片：沉在雕刻面下方，露出深色水窝 */}
-      {poolGeometries.map((pool, index) => (
-        <mesh
-          key={index}
-          geometry={pool}
-          position={[0, 0.13, 0]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          raycast={() => {}}
-          receiveShadow
-        >
-          <meshPhysicalMaterial
-            color="#1d2924"
-            roughness={0.55}
-            metalness={0.02}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      ))}
+      {/* 实心底座：砚台是实心的，这层给雕刻面兜底，同时形成砚池深色水窝 */}
+      <mesh
+        geometry={baseGeometry}
+        position={[0, -0.02, 0]}
+        raycast={() => {}}
+        castShadow
+        receiveShadow
+      >
+        <meshPhysicalMaterial
+          map={stonePBR.map}
+          normalMap={stonePBR.normalMap}
+          normalScale={stoneNormalScale}
+          color="#6e6e6e"
+          roughness={0.36}
+          metalness={0.05}
+          clearcoat={0.55}
+          clearcoatRoughness={0.3}
+        />
+      </mesh>
 
       {/* 木质底座 */}
       <RoundedBox
         args={[2.9, 0.12, 1.9]}
         radius={0.06}
         smoothness={4}
-        position={[0, -0.15, 0]}
+        position={[0, -0.36, 0]}
         castShadow
         receiveShadow
       >
@@ -910,7 +840,13 @@ export function Carve3D({
           environmentIntensity={0.3}
         />
       </Suspense>
-      <ambientLight intensity={0.4} />
+      <ambientLight intensity={0.34} />
+      {/* 掠射侧光：浮雕的立体感全靠掠射光在凹槽里投影，顶光只会把起伏压平 */}
+      <directionalLight
+        position={[-3.0, 2.2, 2.6]}
+        intensity={0.85}
+        color="#fff0d8"
+      />
       <directionalLight
         position={[4, 6, 4]}
         intensity={1.7}
