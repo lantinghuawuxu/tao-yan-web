@@ -346,33 +346,100 @@ export function createCarveBody(planeWidth: number, planeHeight: number) {
 export type RawStone = 'green' | 'yellow' | 'purple'
 
 // 原石轮廓：三种石料三套不同扰动（主频/次频/相位），包围盒约 2.6×1.6
+// d/e 是高频项：原石边缘从来不是一条顺滑曲线，而是密布细微崩口。
+// 频率取 9.5 / 15.3 这种非整数倍频——整数倍频会在轮廓上叠出
+// 手工折纸那样的规律感，一眼就看出是程序生成的
 const RAW_PARAMS: Record<
   RawStone,
-  { a: number; b: number; c: number; p1: number; p2: number; p3: number }
+  {
+    a: number
+    b: number
+    c: number
+    d: number
+    e: number
+    p1: number
+    p2: number
+    p3: number
+    p4: number
+    p5: number
+  }
 > = {
-  green: { a: 0.1, b: 0.06, c: 0.03, p1: 0.9, p2: -0.5, p3: 0.2 },
-  yellow: { a: 0.05, b: 0.1, c: 0.04, p1: 2.2, p2: 1.1, p3: -0.7 },
-  purple: { a: 0.12, b: 0.04, c: 0.06, p1: -0.4, p2: 0.3, p3: 2.4 },
+  green: {
+    a: 0.1,
+    b: 0.06,
+    c: 0.03,
+    d: 0.017,
+    e: 0.009,
+    p1: 0.9,
+    p2: -0.5,
+    p3: 0.2,
+    p4: 1.7,
+    p5: -2.3,
+  },
+  yellow: {
+    a: 0.05,
+    b: 0.1,
+    c: 0.04,
+    d: 0.015,
+    e: 0.011,
+    p1: 2.2,
+    p2: 1.1,
+    p3: -0.7,
+    p4: -1.2,
+    p5: 0.6,
+  },
+  purple: {
+    a: 0.12,
+    b: 0.04,
+    c: 0.06,
+    d: 0.019,
+    e: 0.008,
+    p1: -0.4,
+    p2: 0.3,
+    p3: 2.4,
+    p4: 2.9,
+    p5: -0.8,
+  },
 }
 
-const RAW_SEGMENTS = 128
+const RAW_SEGMENTS = 180
 
 function rawScale(stone: RawStone) {
   const s = RAW_PARAMS[stone]
-  const maxAmp = 1 + s.a + s.b + s.c
+  const maxAmp = 1 + s.a + s.b + s.c + s.d + s.e
   return { scaleX: 1.3 / maxAmp, scaleY: 0.8 / maxAmp }
 }
 
 // 轮廓的极坐标半径函数 r(θ)。判点是否在形内只需比较半径 —— O(1)，
 // 比「多边形射线法逐点遍历」快几个数量级（裁剪 8 万个三角形时是必须的）
-function rawRadius(stone: RawStone, angle: number) {
+function smoothRadius(stone: RawStone, angle: number) {
   const s = RAW_PARAMS[stone]
   return (
     1 +
     Math.sin(angle * 3 + s.p1) * s.a +
     Math.cos(angle * 5 + s.p2) * s.b +
-    Math.sin(angle * 7 + s.p3) * s.c
+    Math.sin(angle * 7 + s.p3) * s.c +
+    Math.sin(angle * 9.5 + s.p4) * s.d +
+    Math.cos(angle * 15.3 + s.p5) * s.e
   )
+}
+
+// 纯正弦叠加出来的轮廓永远是顺滑的，磨出来像橡皮泥。
+// 板岩有劈理面，原石边缘本来就带几段平直的劈裂边，转折处是硬的。
+// 做法：把圆周切成若干不等分的扇区，扇区内按弦线（直线）走，再与平滑轮廓混合。
+// 只混合 55%——全取弦线会变成一个生硬的多边形，太假。
+const FACET_COUNT = 9
+function rawRadius(stone: RawStone, angle: number) {
+  const s = RAW_PARAMS[stone]
+  const step = (Math.PI * 2) / FACET_COUNT
+  const shifted = angle - s.p4 + Math.PI * 4
+  const index = Math.floor(shifted / step)
+  const t = shifted / step - index
+  const a0 = s.p4 + index * step - Math.PI * 4
+  const r0 = smoothRadius(stone, a0)
+  const r1 = smoothRadius(stone, a0 + step)
+  const chord = r0 + (r1 - r0) * t
+  return smoothRadius(stone, angle) * 0.45 + chord * 0.55
 }
 
 function rawStonePoints(stone: RawStone, scale = 1): THREE.Vector2[] {

@@ -11,7 +11,13 @@ export type StonePBR = {
 }
 
 // 真实洮河石三大石色的照片扫描 PBR 贴图（ambientCG · CC0 免费商用）
-// 鹦哥绿=深绿大理石(细腻云纹) / 黄膘石=金黄层理玛瑙 / 紫石(羊肝红)=红棕玛瑙
+// 源材质按岩石成因挑选，不是按颜色：
+//   鹦哥绿 ← Rock020 细粒板岩（纵向劈理、丝绢光泽，正是洮河石的水云母质板岩）
+//   黄膘石 ← Rock041 细粒粉砂岩（均匀致密，带矿物黄斑，对应黄膘石）
+//   紫石   ← Rock035 细粒黑色页岩（致密含铁，对应羊肝红/紫石）
+// 色相在构建期烘焙（tools/bake_stone.py）：明暗结构 100% 取原扫描，
+// 色度方向向洮河石本色拉 55~74%，保留原图的冷暖杂质。
+// 因此运行时绝不能再做一次「亮度 → 单色」映射，那样只会退回磨砂塑料。
 const SOURCES: Record<
   StoneVariant,
   { color: string; normal: string; rough: string }
@@ -33,26 +39,26 @@ const SOURCES: Record<
   },
 }
 
-// 每种洮河石的真实基色：贴图未就绪时用它兜底，绝不出现白模
+// 每种洮河石的真实基色：取烘焙后贴图的平均色，保证加载前后不跳色
 export const STONE_BASE: Record<StoneVariant, string> = {
-  green: '#3d6b5b',
-  yellow: '#8a7742',
-  purple: '#6b4a56',
+  green: '#415b4d',
+  yellow: '#8a764c',
+  purple: '#473640',
 }
 
 // 雕刻露出的「深层石色」——真实雕刻削去表层，露出内部更深更润的石色
 export const STONE_DEEP: Record<StoneVariant, string> = {
-  green: '#17322a',
-  yellow: '#2e3a1f',
-  purple: '#381f2b',
+  green: '#20352c',
+  yellow: '#4a3d22',
+  purple: '#2e2029',
 }
 
 // 凿开后露出的石色：比表面略深、略饱和，但仍是石头，不能是近黑。
 // 近黑的凹槽配上 AO 会变成「黑洞」，反而失去凿刻的体积感。
 export const STONE_CARVE: Record<StoneVariant, string> = {
-  green: '#1d3a30',
-  yellow: '#4a3718',
-  purple: '#331d26',
+  green: '#2b4438',
+  yellow: '#5c4a28',
+  purple: '#3a2530',
 }
 
 function clamp255(value: number) {
@@ -117,48 +123,7 @@ function getFallback(variant: StoneVariant): StonePBR {
   return pbr
 }
 
-// 着色校正：ambientCG 的贴图是「大理石 / 玛瑙」，直接贴上去不是洮河石的样子
-// （深绿大理石平均色只有 #101514 近乎纯黑，提亮后又露出大理石白斑）。
-// 做法：保留贴图的亮度细节（真实石材的层理、颗粒、起伏），把色相统一映射到
-// 洮河石本色。既不是「换个颜色」，也不是「贴一块别的石头」。
-const STONE_ALBEDO: Record<StoneVariant, { r: number; g: number; b: number }> = {
-  green: { r: 74, g: 116, b: 100 },
-  yellow: { r: 162, g: 128, b: 58 },
-  purple: { r: 99, g: 65, b: 76 },
-}
-
-function colorizeTexture(
-  texture: THREE.Texture,
-  albedo: { r: number; g: number; b: number },
-) {
-  const image = texture.image as HTMLImageElement | undefined
-  if (!image || !image.width) return texture
-  const canvas = document.createElement('canvas')
-  canvas.width = image.width
-  canvas.height = image.height
-  const context = canvas.getContext('2d')
-  if (!context) return texture
-  context.drawImage(image, 0, 0)
-  const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-  const data = imageData.data
-  for (let i = 0; i < data.length; i += 4) {
-    const luminance =
-      (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) / 255
-    // 亮度调制：暗部的细微起伏保留，亮部不要冲成白斑
-    const k = 0.44 + 0.84 * Math.pow(luminance, 0.9)
-    data[i] = clamp255(albedo.r * k)
-    data[i + 1] = clamp255(albedo.g * k)
-    data[i + 2] = clamp255(albedo.b * k)
-  }
-  context.putImageData(imageData, 0, 0)
-  const mapped = new THREE.CanvasTexture(canvas)
-  mapped.colorSpace = THREE.SRGBColorSpace
-  mapped.wrapS = THREE.RepeatWrapping
-  mapped.wrapT = THREE.RepeatWrapping
-  mapped.anisotropy = 8
-  mapped.needsUpdate = true
-  return mapped
-}
+// 着色校正已移到构建期（tools/bake_stone.py），这里直接使用烘焙好的成品贴图。
 
 function loadStone(variant: StoneVariant): Promise<StonePBR> {
   const loaded = loadedCache.get(variant)
@@ -175,8 +140,7 @@ function loadStone(variant: StoneVariant): Promise<StonePBR> {
     loader.loadAsync(source.normal),
     loader.loadAsync(source.rough),
   ])
-    .then(([rawMap, normalMap, roughnessMap]) => {
-      const map = colorizeTexture(rawMap, STONE_ALBEDO[variant]) as THREE.Texture
+    .then(([map, normalMap, roughnessMap]) => {
       map.colorSpace = THREE.SRGBColorSpace
       normalMap.colorSpace = THREE.NoColorSpace
       roughnessMap.colorSpace = THREE.NoColorSpace

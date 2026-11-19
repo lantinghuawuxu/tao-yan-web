@@ -9,17 +9,29 @@ const HEIGHT_SRC: Record<InkstonePattern, string> = {
   meander: 'textures/patterns/meander_height.png',
 }
 
-// 三种洮河石的基调色：预览必须跟随所选石料，否则紫石也会显示成绿石
+// 石料贴图缺失时的兜底底色
 const BASE_BY_STONE: Record<string, { r: number; g: number; b: number }> = {
-  green: { r: 76, g: 118, b: 102 },
-  yellow: { r: 132, g: 114, b: 72 },
-  purple: { r: 112, g: 80, b: 92 },
+  green: { r: 65, g: 91, b: 77 },
+  yellow: { r: 138, g: 118, b: 76 },
+  purple: { r: 71, g: 54, b: 64 },
+}
+
+function loadImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = reject
+    image.src = src
+  })
 }
 
 /**
  * 用真实纹样高度图做浮雕光照渲染：
  * 从高度场求法线，打一束左上斜光，得到凸起受光、凹槽积影的浮雕效果。
- * 预览和 3D 雕刻面共用同一张高度图，所以「看到什么就刻出什么」。
+ *
+ * 底材直接取 3D 雕刻面用的同一张石料贴图——
+ * 之前这里是纯色底，预览看起来是一块上了色的塑料片，
+ * 与 3D 里那块有层理、有颗粒的石头完全不是一回事。
  */
 export function PatternRelief({
   id,
@@ -32,25 +44,34 @@ export function PatternRelief({
 
   useEffect(() => {
     let cancelled = false
-    const img = new Image()
+    const size = 512
 
-    img.onload = () => {
+    const render = (
+      patternImage: HTMLImageElement | null,
+      stoneImage: HTMLImageElement | null,
+    ) => {
       if (cancelled) return
       const canvas = canvasRef.current
       const context = canvas?.getContext('2d')
       if (!canvas || !context) return
 
-      const size = 512
       canvas.width = size
       canvas.height = size
 
-      const scratch = document.createElement('canvas')
-      scratch.width = size
-      scratch.height = size
-      const scratchContext = scratch.getContext('2d')
-      if (!scratchContext) return
-      scratchContext.drawImage(img, 0, 0, size, size)
-      const source = scratchContext.getImageData(0, 0, size, size).data
+      const sample = (image: HTMLImageElement | null) => {
+        const scratch = document.createElement('canvas')
+        scratch.width = size
+        scratch.height = size
+        const scratchContext = scratch.getContext('2d')
+        if (!image || !scratchContext) return null
+        scratchContext.drawImage(image, 0, 0, size, size)
+        return scratchContext.getImageData(0, 0, size, size).data
+      }
+
+      const source = sample(patternImage)
+      if (!source) return
+      const stonePixels = sample(stoneImage)
+      const BASE = BASE_BY_STONE[stone] ?? BASE_BY_STONE.green
 
       // 与 3D 雕刻面完全一致的处理：先取「比周围更暗的细线」（高通），
       // 再按同一深度压成阴刻。这样预览里的线，就是石面上真正会刻出来的那道线。
@@ -98,7 +119,6 @@ export function PatternRelief({
         height[i] = 1 - line * 0.28
       }
 
-      const BASE = BASE_BY_STONE[stone] ?? BASE_BY_STONE.green
       const out = context.createImageData(size, size)
       // 左上斜射光
       const lxRaw = -0.5
@@ -140,19 +160,30 @@ export function PatternRelief({
           const highlight = spec * 172
 
           const target = index * 4
-          out.data[target] = Math.min(255, BASE.r * shade + highlight)
-          out.data[target + 1] = Math.min(255, BASE.g * shade + highlight * 0.94)
-          out.data[target + 2] = Math.min(255, BASE.b * shade + highlight * 0.8)
+          if (stonePixels) {
+            out.data[target] = Math.min(255, stonePixels[target] * shade + highlight)
+            out.data[target + 1] = Math.min(255, stonePixels[target + 1] * shade + highlight * 0.94)
+            out.data[target + 2] = Math.min(255, stonePixels[target + 2] * shade + highlight * 0.8)
+          } else {
+            out.data[target] = Math.min(255, BASE.r * shade + highlight)
+            out.data[target + 1] = Math.min(255, BASE.g * shade + highlight * 0.94)
+            out.data[target + 2] = Math.min(255, BASE.b * shade + highlight * 0.8)
+          }
           out.data[target + 3] = 255
         }
       }
       context.putImageData(out, 0, 0)
     }
 
-    img.src = HEIGHT_SRC[id]
+    Promise.all([
+      loadImage(HEIGHT_SRC[id]),
+      loadImage(`textures/inkstone/${stone}_color.jpg`).catch(() => null),
+    ])
+      .then(([patternImage, stoneImage]) => render(patternImage, stoneImage))
+      .catch(() => render(null, null))
+
     return () => {
       cancelled = true
-      img.onload = null
     }
   }, [id, stone])
 

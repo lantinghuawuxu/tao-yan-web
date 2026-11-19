@@ -510,7 +510,7 @@ function CarveSurface({
   const baseGeometry = useMemo(() => createRawStoneBase(stone), [stone])
 
   const stonePBR = useGreenStoneTexture(stone, 2)
-  const stoneNormalScale = useMemo(() => new THREE.Vector2(0.7, 0.7), [])
+  const stoneNormalScale = useMemo(() => new THREE.Vector2(0.55, 0.55), [])
 
   const heightTextureRef = useRef(heightTexture)
   const carveMaskTextureRef = useRef(carveMaskTexture)
@@ -882,7 +882,7 @@ function CarveSurface({
       new THREE.MeshPhysicalMaterial({
         color: 0xffffff,
         // 洮河石是哑光细润的石面，不是玻璃。clearcoat 越高越像树脂
-        roughness: 0.66,
+        roughness: 0.95,
         metalness: 0.02,
         clearcoat: 0.05,
         clearcoatRoughness: 0.62,
@@ -893,15 +893,14 @@ function CarveSurface({
     [],
   )
 
-  // 雕刻面单独用一份贴图：石沿的 repeat=2 会让纹理过密，
-  // 磨平面用更小的重复尺度才像同一块石头的延续
+  // 雕刻面沿用石沿的重复尺度：同一块石头，砚堂不能比砚边颗粒粗一倍
   const carveMap = useMemo(() => {
     const base = stonePBR.map
     if (!base) return null
     const cloned = base.clone()
     cloned.wrapS = THREE.RepeatWrapping
     cloned.wrapT = THREE.RepeatWrapping
-    cloned.repeat.set(1, 1)
+    cloned.repeat.set(2, 2)
     cloned.offset.set(0, 0)
     cloned.needsUpdate = true
     return cloned
@@ -918,7 +917,7 @@ function CarveSurface({
     const cloned = base.clone()
     cloned.wrapS = THREE.RepeatWrapping
     cloned.wrapT = THREE.RepeatWrapping
-    cloned.repeat.set(1, 1)
+    cloned.repeat.set(2, 2)
     cloned.offset.set(0, 0)
     cloned.needsUpdate = true
     return cloned
@@ -936,7 +935,7 @@ function CarveSurface({
     material.roughnessMap = stonePBR.roughnessMap
     // 石头本体的微观起伏 —— 这一行是「像石头」和「像树脂」的分界
     material.normalMap = carveNormal
-    material.normalScale.set(0.9, 0.9)
+    material.normalScale.set(0.55, 0.55)
     // 凹凸贴图交给 GPU 用屏幕空间导数逐像素求法线：
     // 精度等于贴图分辨率，能刻画细刻线；而 512 的 CPU 法线图会把细线抹成缓坡。
     material.bumpMap = heightTexture
@@ -950,11 +949,11 @@ function CarveSurface({
     material.displacementMap = null
     material.displacementScale = 0
     material.displacementBias = 0
-    // 辅助线：纯白自发光 × 高强度，金色由贴图自身给出。
-    // 之前用暗金 #c8a86b、强度 0.55，经色调映射后基本看不见。
-    material.emissive.set('#ffffff')
+    // 辅助线：暖白自发光。纯白 × 1.45 在深色石面上会烧成一片死白，
+    // 失去「金线」的意味；降到暖调 1.2，既有金感又不刺眼
+    material.emissive.set('#ffe9bd')
     material.emissiveMap = showGuide && guide ? guide.texture : null
-    material.emissiveIntensity = showGuide && guide ? 1.45 : 0
+    material.emissiveIntensity = showGuide && guide ? 1.2 : 0
 
     const deepColor = new THREE.Color(STONE_CARVE[stone])
     const maskTexture = carveMaskTexture
@@ -1060,10 +1059,12 @@ void main() {`,
           roughnessMap={stonePBR.roughnessMap}
           normalScale={stoneNormalScale}
           color="#ffffff"
-          roughness={0.34}
-          metalness={0.03}
-          clearcoat={0.4}
-          clearcoatRoughness={0.35}
+          // roughness 交给扫描贴图：1.0 × map 才是这块石头真实的涩度。
+          // 之前写 0.34，等于把石头强行抛了光，观感是塑料
+          roughness={1}
+          metalness={0}
+          clearcoat={0.06}
+          clearcoatRoughness={0.55}
         />
       </mesh>
 
@@ -1081,11 +1082,11 @@ void main() {`,
           map={stonePBR.map}
           normalMap={stonePBR.normalMap}
           normalScale={stoneNormalScale}
-          color="#6e6e6e"
-          roughness={0.36}
-          metalness={0.05}
-          clearcoat={0.55}
-          clearcoatRoughness={0.3}
+          color="#b4b4b4"
+          roughness={1}
+          metalness={0}
+          clearcoat={0.04}
+          clearcoatRoughness={0.6}
         />
       </mesh>
 
@@ -1132,7 +1133,7 @@ export function Carve3D({
       dpr={[1, 2]}
       shadows
       camera={{ position: [0, 2.15, 3.15], fov: 35 }}
-      gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true, toneMappingExposure: 1.3 }}
+      gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true, toneMappingExposure: 1.02 }}
       onCreated={(state) => {
         onCaptureReady?.(() => state.gl.domElement.toDataURL('image/png'))
       }}
@@ -1141,30 +1142,33 @@ export function Carve3D({
         <Environment
           files="models/hdri/studio_small_08_1k.hdr"
           background={false}
-          environmentIntensity={0.2}
+          environmentIntensity={0.12}
         />
       </Suspense>
-      <ambientLight intensity={0.55} />
-      {/* 柔和补光：砚堂是打磨面，不该沉在黑里 */}
-      <directionalLight position={[1.4, 4.2, 2.6]} intensity={0.55} />
-      {/* 掠射侧光：浮雕的立体感全靠掠射光在凹槽里投影，顶光只会把起伏压平 */}
+      <ambientLight intensity={0.28} />
+      {/* 柔和补光：砚堂是打磨面，不该沉在黑里，但也不能亮到把石头照成白玉 */}
+      <directionalLight position={[1.4, 4.2, 2.6]} intensity={0.3} />
+      {/* 掠射侧光：浮雕的立体感全靠掠射光在凹槽里投影，顶光只会把起伏压平。
+          这是唯一保留高强度的灯——刻痕能不能"看进去"全看它 */}
       <directionalLight
         position={[-3.4, 1.05, 2.2]}
-        intensity={1.45}
+        intensity={1.3}
         color="#fff2dd"
       />
+      {/* 主光降到 0.85：原来 1.6 加上其余五盏，石头整体被照到接近全白，
+          石纹全部冲掉，观感从"砚石"变成"抛光玉雕" */}
       <directionalLight
         position={[4, 6, 4]}
-        intensity={1.6}
+        intensity={0.85}
         castShadow
         shadow-mapSize={[1024, 1024]}
       />
-      <pointLight position={[-4, 2, -3]} intensity={0.8} color="#8fbfae" />
+      <pointLight position={[-4, 2, -3]} intensity={0.3} color="#8fbfae" />
       <spotLight
         position={[0, 5, 1]}
         angle={0.6}
         penumbra={1}
-        intensity={1.1}
+        intensity={0.5}
         color="#e2d0a6"
       />
       <CarveSurface
