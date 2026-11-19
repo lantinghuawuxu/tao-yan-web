@@ -419,12 +419,9 @@ export function createRawStoneRim(stone: RawStone) {
 
   const body = new THREE.ExtrudeGeometry(outer, {
     depth: THICKNESS,
-    // 倒角必须远小于砚边宽度（短轴方向边宽仅约 0.12），
-    // 否则内外两侧的倒角面会互相穿插，沿洞口长出一圈「玉米粒」尖刺
-    bevelEnabled: true,
-    bevelSegments: 2,
-    bevelSize: 0.015,
-    bevelThickness: 0.015,
+    // 关掉倒角：砚边在「腰部」只有约 0.09 宽，任何倒角都会让内外两侧的
+    // 倒角面互相穿插，沿砚边炸出一排小锯齿
+    bevelEnabled: false,
     curveSegments: 48,
   })
   body.rotateX(-Math.PI / 2)
@@ -436,7 +433,9 @@ export function createRawStoneRim(stone: RawStone) {
 // 原石底座：实心随形厚板，顶面略低于雕刻面最低点，作为砚堂/砚池的底
 // （没有它，石沿就是一圈悬空的环，中间是空的——真实砚台是实心的）
 export function createRawStoneBase(stone: RawStone) {
-  const outer = createRawStoneShape(stone, 1.03)
+  // 收在石沿外缘(1.06)以内：底座倒角一旦越过石沿外壁，
+  // 就会沿砚边炸出一排小锯齿
+  const outer = createRawStoneShape(stone, 0.985)
   const body = new THREE.ExtrudeGeometry(outer, {
     depth: 0.5,
     bevelEnabled: true,
@@ -464,7 +463,7 @@ export function createRawStoneCarvePlane(
   const { scaleX, scaleY } = rawScale(stone)
   const geometry = new THREE.PlaneGeometry(width, height, segX, segY)
   const position = geometry.attributes.position as THREE.BufferAttribute
-  const limitScale = 0.97
+  const limitScale = 0.93
 
   // 把轮廓外的顶点「吸附」到轮廓边界上，而不是删掉它们。
   // 删除三角形会留下顶点在轮廓外的三角形，那些顶点会采样到高度图边缘的极值，

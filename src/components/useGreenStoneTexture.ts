@@ -47,6 +47,14 @@ export const STONE_DEEP: Record<StoneVariant, string> = {
   purple: '#381f2b',
 }
 
+// 凿开后露出的石色：比表面略深、略饱和，但仍是石头，不能是近黑。
+// 近黑的凹槽配上 AO 会变成「黑洞」，反而失去凿刻的体积感。
+export const STONE_CARVE: Record<StoneVariant, string> = {
+  green: '#1d3a30',
+  yellow: '#4a3718',
+  purple: '#331d26',
+}
+
 function clamp255(value: number) {
   return value < 0 ? 0 : value > 255 ? 255 : value
 }

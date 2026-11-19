@@ -52,10 +52,50 @@ export function PatternRelief({
       scratchContext.drawImage(img, 0, 0, size, size)
       const source = scratchContext.getImageData(0, 0, size, size).data
 
-      // 高度图语义是「黑=凸、白=凹」，反转成 1 = 最高
+      // 与 3D 雕刻面完全一致的处理：先取「比周围更暗的细线」（高通），
+      // 再按同一深度压成阴刻。这样预览里的线，就是石面上真正会刻出来的那道线。
+      const gray = new Float32Array(size * size)
+      for (let i = 0; i < gray.length; i += 1) {
+        gray[i] =
+          (0.299 * source[i * 4] +
+            0.587 * source[i * 4 + 1] +
+            0.114 * source[i * 4 + 2]) /
+          255
+      }
+      // 分离式盒式模糊（局部均值）
+      const radius = 4
+      const window = radius * 2 + 1
+      const temp = new Float32Array(size * size)
+      const base = new Float32Array(size * size)
+      for (let y = 0; y < size; y += 1) {
+        const row = y * size
+        let sum = 0
+        for (let k = -radius; k <= radius; k += 1) {
+          sum += gray[row + Math.min(size - 1, Math.max(0, k))]
+        }
+        for (let x = 0; x < size; x += 1) {
+          temp[row + x] = sum / window
+          sum +=
+            gray[row + Math.min(size - 1, x + radius + 1)] -
+            gray[row + Math.max(0, x - radius)]
+        }
+      }
+      for (let x = 0; x < size; x += 1) {
+        let sum = 0
+        for (let k = -radius; k <= radius; k += 1) {
+          sum += temp[Math.min(size - 1, Math.max(0, k)) * size + x]
+        }
+        for (let y = 0; y < size; y += 1) {
+          base[y * size + x] = sum / window
+          sum +=
+            temp[Math.min(size - 1, y + radius + 1) * size + x] -
+            temp[Math.max(0, y - radius) * size + x]
+        }
+      }
       const height = new Float32Array(size * size)
       for (let i = 0; i < height.length; i += 1) {
-        height[i] = 1 - source[i * 4] / 255
+        const line = Math.min(1, Math.max(0, (base[i] - gray[i] - 0.038) * 3.0))
+        height[i] = 1 - line * 0.28
       }
 
       const BASE = BASE_BY_STONE[stone] ?? BASE_BY_STONE.green
