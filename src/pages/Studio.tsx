@@ -196,6 +196,8 @@ function Studio() {
   const [carve3DKey, setCarve3DKey] = useState(0)
   const [carve3DMode, setCarve3DMode] = useState<'carve' | 'orbit'>('carve')
   const [showGuide, setShowGuide] = useState(true)
+  const [carveProgress, setCarveProgress] = useState(0)
+  const [briefOpen, setBriefOpen] = useState(true)
   const [tool, setTool] = useState<Tool>('chisel')
   const [brushSize, setBrushSize] = useState(28)
   const [artwork, setArtwork] = useState<string | null>(null)
@@ -211,6 +213,9 @@ function Studio() {
   const activeImage = customImage ?? stone.image
   const materialName = customImage ? (customLabel ?? '自定义石料') : stone.name
   const scanning = step === 2 && !scanned
+  // 动刀进度 → 当前工序：先粗后细再收光，是砚雕的固定次序
+  const carveStage = carveProgress < 0.25 ? 0 : carveProgress < 0.7 ? 1 : 2
+  const stageNames = ['粗雕', '细刻', '打磨']
   const analysis = customImage
     ? {
         completeness: 90,
@@ -775,6 +780,41 @@ function Studio() {
             {step === 4 && (
               <div className="carve-layout">
                 <div className="carve-main">
+                  {/* 工序条：打开就知道现在该干什么，而不是面对一块石头发呆 */}
+                  <div className="carve-brief">
+                    <ol className="carve-brief-steps">
+                      {['粗雕 · 顺金线走刀', '细刻 · 修内部细节', '打磨 · 收光去毛刺'].map(
+                        (label, index) => (
+                          <li
+                            key={label}
+                            className={
+                              index === carveStage
+                                ? 'active'
+                                : index < carveStage
+                                  ? 'done'
+                                  : ''
+                            }
+                          >
+                            <span className="brief-num">
+                              {index < carveStage ? '✓' : index + 1}
+                            </span>
+                            {label}
+                          </li>
+                        ),
+                      )}
+                    </ol>
+                    <div className="carve-progress">
+                      <span className="carve-progress-bar">
+                        <i
+                          style={{
+                            width: `${Math.round(carveProgress * 100)}%`,
+                          }}
+                        />
+                      </span>
+                      <b>{Math.round(carveProgress * 100)}%</b>
+                    </div>
+                  </div>
+
                   <div className="carve-toolbar">
                     <div className="tool-group">
                       {tools.map((item) => (
@@ -850,6 +890,7 @@ function Studio() {
                         onUndoReady={(undo) => {
                           undoRef.current = undo
                         }}
+                        onProgress={(ratio) => setCarveProgress(ratio)}
                       />
                       <div className="carve-3d-modes" aria-label="3D 视角">
                         <button
@@ -872,6 +913,28 @@ function Studio() {
                           ? '拖动旋转 · 滚轮缩放'
                           : '按住拖动，在石面上刻出真实 3D 凹槽'}
                       </span>
+                      {briefOpen && carve3DMode === 'carve' && (
+                        <div className="carve-tip" role="dialog" aria-label="雕刻指引">
+                          <strong>怎么下刀</strong>
+                          <ol>
+                            <li>
+                              石面上那条<b>金线</b>就是纹样刀路 ——
+                              按住鼠标，沿着它拖过去。
+                            </li>
+                            <li>
+                              先大后小：<b>粗凿</b>定轮廓 → <b>细刀</b>修内部 →
+                              <b>打磨</b>收光。
+                            </li>
+                            <li>刻过的线会自己消失，跟着剩下的线走就行。</li>
+                          </ol>
+                          <button
+                            type="button"
+                            onClick={() => setBriefOpen(false)}
+                          >
+                            知道了，开始刻
+                          </button>
+                        </div>
+                      )}
                       {carve3DMode === 'carve' && cursorPos && (
                         <span
                           className="carve-cursor"
@@ -921,6 +984,17 @@ function Studio() {
                     <p>{pattern.note} · {Math.round(patternScale * 100)}%</p>
                   </div>
                   <div className="side-card">
+                    <span>当前工序</span>
+                    <strong>{stageNames[carveStage]}</strong>
+                    <p>
+                      {carveStage === 0
+                        ? '用粗凿顺金线定出纹样轮廓，不必刻深。'
+                        : carveStage === 1
+                          ? '换细刀修内部细节，线条之间要留出石面。'
+                          : '打磨收光，把毛刺和凿出的唇边压平。'}
+                    </p>
+                  </div>
+                  <div className="side-card">
                     <span>当前工具</span>
                     <strong>{activeTool.label}</strong>
                     <p>{activeTool.note}</p>
@@ -931,7 +1005,7 @@ function Studio() {
                     onClick={() => setShowGuide((current) => !current)}
                   >
                     <span className="toggle-dot" />
-                    显示纹样辅助线
+                    {showGuide ? '辅助线：开（照着金线刻）' : '辅助线：关（自由刻）'}
                   </button>
                   <div className="side-card side-note">
                     <span>关于虚拟雕刻</span>

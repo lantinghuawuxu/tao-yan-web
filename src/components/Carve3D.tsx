@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import {
   ContactShadows,
   Environment,
@@ -58,9 +58,48 @@ function getCarvePools(stone: StoneVariant) {
 // 之前把整幅 AI 图当高度场用，等于把一张带明暗的照片压进石头里，
 // 结果是一堆卵石状的凸块。这里改用高通滤波：只保留「比周围更暗的细线」，
 // 也就是真正的刀路笔画，大面积的明暗阴影一律丢掉。
-const LINE_GAIN = 3.0 // 线条响应增益
-const LINE_FLOOR = 0.038 // 低于这个响应当作石面噪声（叶脉等细节会被滤掉）
+const LINE_GAIN = 3.4 // 线条响应增益
+const LINE_FLOOR = 0.022 // 低于这个响应当作石面噪声。0.038 会连主笔画一起滤掉，金线稀稀拉拉了
 const LINE_DEPTH = 0.28 // 刻到底处的深度（纹样只作浅刻导引，不抢用户刀痕）
+
+// 分离式最大值膨胀（先横后竖）：O(n·r)，比逐像素扫邻域的 O(n·r²) 快一个量级。
+// 原文物拓片上的线是连续的，而 AI 高度图里的笔画深浅不匀、常常断成虚线，
+// 不做加粗的话辅助线在石面上几乎连不成形。
+function dilateLine(
+  line: Float32Array,
+  size: number,
+  passes: number,
+  radius: number,
+) {
+  let src = line
+  for (let pass = 0; pass < passes; pass += 1) {
+    const tmp = new Float32Array(size * size)
+    const out = new Float32Array(size * size)
+    for (let y = 0; y < size; y += 1) {
+      const row = y * size
+      for (let x = 0; x < size; x += 1) {
+        let peak = 0
+        for (let k = -radius; k <= radius; k += 1) {
+          const value = src[row + Math.min(size - 1, Math.max(0, x + k))]
+          if (value > peak) peak = value
+        }
+        tmp[row + x] = peak
+      }
+    }
+    for (let x = 0; x < size; x += 1) {
+      for (let y = 0; y < size; y += 1) {
+        let peak = 0
+        for (let k = -radius; k <= radius; k += 1) {
+          const value = tmp[Math.min(size - 1, Math.max(0, y + k)) * size + x]
+          if (value > peak) peak = value
+        }
+        out[y * size + x] = peak
+      }
+    }
+    src = out
+  }
+  return src
+}
 
 function buildGrayField(
   image: HTMLImageElement,
@@ -147,21 +186,9 @@ function createGuideTextureSource(
   const gray = buildGrayField(heightImage, size, scale)
   if (!gray) return null
   const line = lineField(gray, size, 8)
-  // 3x3 最大值膨胀：笔画本身深浅不均，直接取会断成虚线
-  const dilated = new Float32Array(line.length)
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      let peak = 0
-      for (let dy = -1; dy <= 1; dy += 1) {
-        const ny = Math.min(size - 1, Math.max(0, y + dy)) * size
-        for (let dx = -1; dx <= 1; dx += 1) {
-          const value = line[ny + Math.min(size - 1, Math.max(0, x + dx))]
-          if (value > peak) peak = value
-        }
-      }
-      dilated[y * size + x] = peak
-    }
-  }
+  // 只加粗一遍、半径 1：纹样图里的细节线本来就密，
+  // 膨胀过头会把整片砚堂连成一整块金箔，反而看不出刀路走向
+  const dilated = dilateLine(line, size, 1, 1)
 
   const out = context.createImageData(CANVAS_SIZE, CANVAS_SIZE)
   const goldR = 255
@@ -171,8 +198,9 @@ function createGuideTextureSource(
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
-      // 0.05 以下当作石面噪声抹掉，避免整面泛金
-      const alpha = Math.min(1, Math.max(0, dilated[y * size + x] * 1.25 - 0.1))
+      // 0.26 以下全部压成 0：只留响应最强的骨干线。
+      // 之前几乎不过滤，整幅图的每一条细节都被当成刀路，砚堂糊成一张金箔。
+      const alpha = Math.min(1, Math.max(0, (dilated[y * size + x] - 0.26) * 2.6))
       const x0 = Math.round(x * step)
       const y0 = Math.round(y * step)
       for (let dy = 0; dy < step; dy += 1) {
@@ -201,6 +229,11 @@ function createGuideTextureSource(
 // 之前每帧在 1024² 上跑 36 次邻域采样（约 3700 万次内存读取），这是雕刻卡顿的根源。
 // 现在先用 drawImage 让 GPU 做双线性降采样，再只在小图上跑循环。
 const MASK_SIZE = 256
+
+// 动刀进度：32×32 的粗网格记录「哪一格动过刀」。
+// 比统计刻痕面积便宜几个数量级，语义也更对——匠人关心的是稿子通没通，
+// 不是挖掉了多少方石头。砚池本来就在高度图里，按面积算会把池子算成刻过的。
+const CARVE_GRID = 32
 
 function downscaleGray(
   source: HTMLCanvasElement,
@@ -256,6 +289,48 @@ function blurGray(gray: Float32Array, size: number, radius: number) {
     }
   }
   return out
+}
+
+// 满幅位移 0.2：基准 0.10，最深 0.00，最高石面 0.20。
+// 砚边顶面在 0.21，整块面严格夹在砚台厚度之内。
+const DISPLACEMENT = 0.2
+
+// CPU 顶点位移：把高度图真正压进几何里。
+// material.displacementMap 和顶点着色器注入都验证过无效（包围盒 y 跨度始终等于
+// 场景倾斜量，顶点根本没动）。直接在 CPU 改 position 最可靠，
+// 而且能顺带 computeVertexNormals —— 凹槽的宏观法线跟着变，
+// 掠射光扫过时才有真实的体积，而不是只靠 bumpMap 的假光影。
+function applyDisplacement(
+  heightCanvas: HTMLCanvasElement,
+  scratch: HTMLCanvasElement,
+  geometry: THREE.BufferGeometry,
+) {
+  const gray = downscaleGray(heightCanvas, scratch, MASK_SIZE)
+  if (!gray) return
+  const position = geometry.attributes.position as THREE.BufferAttribute
+  const uv = geometry.attributes.uv as THREE.BufferAttribute
+  const last = MASK_SIZE - 1
+
+  for (let i = 0; i < position.count; i += 1) {
+    // 双线性采样：最近邻会在 2 万顶点上采出块状台阶
+    const fx = uv.getX(i) * last
+    const fy = (1 - uv.getY(i)) * last
+    const x0 = Math.max(0, Math.min(last, Math.floor(fx)))
+    const y0 = Math.max(0, Math.min(last, Math.floor(fy)))
+    const x1 = Math.min(last, x0 + 1)
+    const y1 = Math.min(last, y0 + 1)
+    const tx = fx - x0
+    const ty = fy - y0
+    const top =
+      gray[y0 * MASK_SIZE + x0] * (1 - tx) + gray[y0 * MASK_SIZE + x1] * tx
+    const bottom =
+      gray[y1 * MASK_SIZE + x0] * (1 - tx) + gray[y1 * MASK_SIZE + x1] * tx
+    const height = top * (1 - ty) + bottom * ty
+    position.setZ(i, -(height - 0.5) * DISPLACEMENT)
+  }
+
+  position.needsUpdate = true
+  geometry.computeVertexNormals()
 }
 
 // R = 刻痕深度（凿掉多少）
@@ -318,6 +393,7 @@ function CarveSurface({
   showGuide,
   stone,
   onUndoReady,
+  onProgress,
 }: {
   tool: CarveTool
   brushSize: number
@@ -327,6 +403,7 @@ function CarveSurface({
   showGuide: boolean
   stone: StoneVariant
   onUndoReady?: (undo: () => void) => void
+  onProgress?: (ratio: number) => void
 }) {
   const heightCanvas = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -398,7 +475,15 @@ function CarveSurface({
     }
   }, [patternImg, patternScale])
 
-  // 降采样用的暂存画布（遮罩 256），复用避免每帧分配
+  // 调试：把高度图、辅助线与场景暴露到 window，便于在浏览器里直接核对
+  const scene = useThree((state) => state.scene)
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const host = window as unknown as Record<string, unknown>
+    host.__heightCanvas = heightCanvas
+    host.__guideCanvas = guide?.canvas ?? null
+    host.__scene = scene
+  })
   const reliefScratch = useMemo(() => {
     const canvas = document.createElement('canvas')
     canvas.width = CANVAS_SIZE
@@ -414,7 +499,10 @@ function CarveSurface({
   }, [])
 
   const geometry = useMemo(
-    () => createRawStoneCarvePlane(stone, GUIDE_WIDTH, GUIDE_HEIGHT, 560, 360),
+    // 位移只需要承载「大凹槽」的轮廓，细刻线全交给 bumpMap 逐像素计算。
+    // 之前 560×360（20 万顶点）每帧重算位移是卡顿的主因之一，降到 300×190 后
+    // 顶点数只剩 1/3.5，而观感几乎无损
+    () => createRawStoneCarvePlane(stone, GUIDE_WIDTH, GUIDE_HEIGHT, 300, 190),
     [stone],
   )
 
@@ -430,6 +518,31 @@ function CarveSurface({
   const lastUvRef = useRef<THREE.Vector2 | null>(null)
   const normalUpdatePendingRef = useRef(false)
   const maskFrameRef = useRef(0)
+
+  // 动刀进度网格：可刻区域内一共多少格，已经动过多少格
+  const carvedCellsRef = useRef<Uint8Array>(
+    new Uint8Array(CARVE_GRID * CARVE_GRID),
+  )
+  const validCells = useMemo(() => {
+    let total = 0
+    for (let gy = 0; gy < CARVE_GRID; gy += 1) {
+      for (let gx = 0; gx < CARVE_GRID; gx += 1) {
+        const u = (gx + 0.5) / CARVE_GRID
+        const v = (gy + 0.5) / CARVE_GRID
+        if (
+          insideRawStone(
+            stone,
+            (u - 0.5) * GUIDE_WIDTH,
+            (v - 0.5) * GUIDE_HEIGHT,
+            0.86,
+          )
+        ) {
+          total += 1
+        }
+      }
+    }
+    return Math.max(1, total)
+  }, [stone])
 
   useEffect(() => {
     heightTextureRef.current = heightTexture
@@ -494,6 +607,7 @@ function CarveSurface({
     heightTextureRef.current.needsUpdate = true
     rebuildCarveMask(heightCanvas, carveMaskCanvas, maskScratch)
     carveMaskTextureRef.current.needsUpdate = true
+    applyDisplacement(heightCanvas, maskScratch, geometry)
   }, [
     patternImg,
     patternScale,
@@ -503,6 +617,7 @@ function CarveSurface({
     stone,
     heightCanvas,
     carveMaskCanvas,
+    geometry,
   ])
 
   useEffect(() => () => geometry.dispose(), [geometry])
@@ -522,6 +637,16 @@ function CarveSurface({
     const worldX = (uv.x - 0.5) * GUIDE_WIDTH
     const worldY = (uv.y - 0.5) * GUIDE_HEIGHT
     if (!insideRawStone(stone, worldX, worldY, 0.86)) return
+
+    const gridX = Math.min(
+      CARVE_GRID - 1,
+      Math.max(0, Math.floor(uv.x * CARVE_GRID)),
+    )
+    const gridY = Math.min(
+      CARVE_GRID - 1,
+      Math.max(0, Math.floor(uv.y * CARVE_GRID)),
+    )
+    carvedCellsRef.current[gridY * CARVE_GRID + gridX] = 1
 
     const x = uv.x * CANVAS_SIZE
     const y = (1 - uv.y) * CANVAS_SIZE
@@ -562,9 +687,11 @@ function CarveSurface({
         // 刀口尺寸：凿子宽而短，细刻窄而长
         const length = radius * (isChisel ? 2.4 : 1.8)
         const width = radius * (isChisel ? 0.62 : 0.8)
-        // 一条渐变同时编码「隆起石屑(凸) — 槽 — 隆起石屑(凸)」。
-        // 没有这两道唇边，凹槽就只是石面上一条暗痕，不像被凿开。
+        // 一条渐变同时编码「隆起石屑(凸) — 槽壁 — 平槽底 — 隆起石屑(凸)」。
+        // 没有唇边，凹槽就只是石面上一条暗痕，不像被凿开。
         // 高度图语义：128 = 石面基准，越小越高，越大越深。
+        // 关键是槽壁要陡：之前唇边到槽底横跨 0.28 的宽度做渐变，
+        // 位移出来是一道缓坡，看着像被手指按下去的软泥；收窄到 0.055 才是凿断的断崖。
         const lip = isChisel ? 103 : 109
         const deep = Math.min(255, depth + 14)
         const profile = heightContext.createLinearGradient(
@@ -574,13 +701,13 @@ function CarveSurface({
           width * 1.55,
         )
         profile.addColorStop(0, `rgba(${lip},${lip},${lip},0)`)
-        profile.addColorStop(0.12, `rgba(${lip},${lip},${lip},0.82)`)
-        profile.addColorStop(0.27, 'rgba(128,128,128,0)')
-        profile.addColorStop(0.4, `rgba(${depth},${depth},${depth},0.94)`)
+        profile.addColorStop(0.1, `rgba(${lip},${lip},${lip},0.9)`)
+        profile.addColorStop(0.19, 'rgba(128,128,128,0)')
+        profile.addColorStop(0.245, `rgba(${depth},${depth},${depth},0.98)`)
         profile.addColorStop(0.5, `rgba(${deep},${deep},${deep},1)`)
-        profile.addColorStop(0.6, `rgba(${depth},${depth},${depth},0.94)`)
-        profile.addColorStop(0.73, 'rgba(128,128,128,0)')
-        profile.addColorStop(0.88, `rgba(${lip},${lip},${lip},0.82)`)
+        profile.addColorStop(0.755, `rgba(${depth},${depth},${depth},0.98)`)
+        profile.addColorStop(0.81, 'rgba(128,128,128,0)')
+        profile.addColorStop(0.9, `rgba(${lip},${lip},${lip},0.9)`)
         profile.addColorStop(1, `rgba(${lip},${lip},${lip},0)`)
         heightContext.fillStyle = profile
         heightContext.beginPath()
@@ -690,9 +817,22 @@ function CarveSurface({
         // 刻痕遮罩隔帧重算：AO/深色是缓变量，隔帧更新肉眼看不出差别，
         // 但能把每帧的降采样 + 模糊开销砍掉一半（这是 p95 抖动的来源）
         maskFrameRef.current += 1
-        if (maskFrameRef.current % 2 === 0) {
+        // 隔帧重算：AO/深色是缓变量，隔帧肉眼无差，但能省一半开销。
+        // 用 ===1 而不是 ===0：计数从 0 起，===0 会让「第一刀」整帧被跳过，
+        // 表现为下刀瞬间什么都没发生
+        if (maskFrameRef.current % 2 === 1) {
           rebuildCarveMask(heightCanvas, carveMaskCanvas, maskScratch)
           carveMaskTextureRef.current.needsUpdate = true
+          applyDisplacement(heightCanvas, maskScratch, geometry)
+        }
+        // 进度每帧都报：1024 次累加，开销可以忽略，但数值跟手才不会让用户以为没反应
+        if (onProgress && maskFrameRef.current > 0) {
+          const cells = carvedCellsRef.current
+          let carved = 0
+          for (let i = 0; i < cells.length; i += 1) carved += cells[i]
+          // 纹样只占砚堂一部分，刀子也刻不到每一格。
+          // 按 45% 面积折算成 100%，否则老老实实刻满纹样进度条也才走一半
+          onProgress(Math.min(1, carved / validCells / 0.45))
         }
       })
     }
@@ -701,6 +841,12 @@ function CarveSurface({
 
   // —— 撤销：每次下刀前保存高度图快照 ——
   const historyRef = useRef<ImageData[]>([])
+
+  // 调试：把绘制入口暴露到 window，便于在浏览器里沿 UV 划刀、核对刻痕质感
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    ;(window as unknown as Record<string, unknown>).__paint = paint
+  })
 
   const snapshot = () => {
     const heightContext = heightCanvas.getContext('2d')
@@ -720,22 +866,29 @@ function CarveSurface({
     heightTextureRef.current.needsUpdate = true
     rebuildCarveMask(heightCanvas, carveMaskCanvas, maskScratch)
     carveMaskTextureRef.current.needsUpdate = true
-  }, [heightCanvas, carveMaskCanvas, maskScratch])
+    applyDisplacement(heightCanvas, maskScratch, geometry)
+  }, [heightCanvas, carveMaskCanvas, maskScratch, geometry])
 
   useEffect(() => {
     onUndoReady?.(undo)
   }, [onUndoReady, undo])
 
   // —— 雕刻面材质：石纹照片 + 位移高度 + 实时法线 + 刻痕深层色 + 刻痕 AO 合成在同一材质 ——
+  // 「透明塑料感」的真正来源：雕刻面只有位移，没有石头的微观法线，
+  // 而石沿、底座都有真实法线贴图。一个完全光滑的面 + 环境反射 = 一块有机玻璃板，
+  // 刻痕画在这块板上，看起来当然不是刻在石头里。下面必须给它同一套石纹法线。
   const carveMaterial = useMemo(
     () =>
       new THREE.MeshPhysicalMaterial({
-        // 基色由石料决定（下面按 stone 覆盖），压掉玛瑙贴图亮部的偏黄
-        color: 0xd2c2c8,
-        roughness: 0.44,
+        color: 0xffffff,
+        // 洮河石是哑光细润的石面，不是玻璃。clearcoat 越高越像树脂
+        roughness: 0.66,
         metalness: 0.02,
-        clearcoat: 0.3,
-        clearcoatRoughness: 0.42,
+        clearcoat: 0.05,
+        clearcoatRoughness: 0.62,
+        // 兜底：低角度看过去时，单面几何的背面会被完全剔除，
+        // 透出下面的底座，看起来就是「一层透明的东西」
+        side: THREE.DoubleSide,
       }),
     [],
   )
@@ -756,6 +909,23 @@ function CarveSurface({
 
   useEffect(() => () => carveMap?.dispose(), [carveMap])
 
+  // 法线必须与基色共用同一套 UV（repeat=1）。
+  // 若沿用石沿的 repeat=2，石头颗粒会被缩到两倍密、并与基色错位，
+  // 看上去就是「一层磨砂膜」糊在石头上，而不是石头本身。
+  const carveNormal = useMemo(() => {
+    const base = stonePBR.normalMap
+    if (!base) return null
+    const cloned = base.clone()
+    cloned.wrapS = THREE.RepeatWrapping
+    cloned.wrapT = THREE.RepeatWrapping
+    cloned.repeat.set(1, 1)
+    cloned.offset.set(0, 0)
+    cloned.needsUpdate = true
+    return cloned
+  }, [stonePBR.normalMap])
+
+  useEffect(() => () => carveNormal?.dispose(), [carveNormal])
+
   useEffect(() => () => carveMaterial.dispose(), [carveMaterial])
 
   useEffect(() => {
@@ -764,18 +934,27 @@ function CarveSurface({
     material.color.set(0xffffff)
     material.map = carveMap ?? stonePBR.map
     material.roughnessMap = stonePBR.roughnessMap
+    // 石头本体的微观起伏 —— 这一行是「像石头」和「像树脂」的分界
+    material.normalMap = carveNormal
+    material.normalScale.set(0.9, 0.9)
     // 凹凸贴图交给 GPU 用屏幕空间导数逐像素求法线：
     // 精度等于贴图分辨率，能刻画细刻线；而 512 的 CPU 法线图会把细线抹成缓坡。
     material.bumpMap = heightTexture
-    // 负号：高度图里白=深，凹凸要往下凹才是「刻进去」
-    material.bumpScale = -1.15
-    material.displacementMap = heightTexture
-    // 全部向下位移：石面基准比石沿低约 0.11，砚堂低于砚边的真实形制
-    material.displacementScale = -0.24
+    // 负号：高度图里白=深，凹凸要往下凹才是「刻进去」。
+    // 幅度收到 0.5：几何已经做了真实位移 + computeVertexNormals，
+    // 再叠一层强 bump 会让槽壁法线翻过来，掠射光一打就成一片发白的高光
+    material.bumpScale = -0.5
+    // 位移不再走 material.displacementMap —— 实测在这块几何上它完全没有生效，
+    // 雕刻面始终是一张纯平面（包围盒 y 跨度只有场景倾斜的 0.13，没有位移量）。
+    // 改在下面 onBeforeCompile 里直接注入顶点着色器，确定性地把顶点压下去。
+    material.displacementMap = null
+    material.displacementScale = 0
     material.displacementBias = 0
-    material.emissive.set('#c8a86b')
+    // 辅助线：纯白自发光 × 高强度，金色由贴图自身给出。
+    // 之前用暗金 #c8a86b、强度 0.55，经色调映射后基本看不见。
+    material.emissive.set('#ffffff')
     material.emissiveMap = showGuide && guide ? guide.texture : null
-    material.emissiveIntensity = showGuide && guide ? 0.55 : 0
+    material.emissiveIntensity = showGuide && guide ? 1.45 : 0
 
     const deepColor = new THREE.Color(STONE_CARVE[stone])
     const maskTexture = carveMaskTexture
@@ -797,12 +976,15 @@ void main() {`,
   float carveAO = carveSample.g;
   float carveShade = carveSample.b;
   // 凹处露出凿开后的新鲜石色（略深、略饱和，但仍是石头）
-  vec3 deepStone = uDeepColor * (0.85 + 0.5 * carveAO);
-  diffuseColor.rgb = mix(diffuseColor.rgb, deepStone, carveAmount * 0.92);
+  vec3 deepStone = uDeepColor * (0.8 + 0.45 * carveAO);
+  diffuseColor.rgb = mix(diffuseColor.rgb, deepStone, carveAmount * 0.96);
   // AO + 方向性投影作用于整个石面（不只是刻痕）：
   // 纹样浮雕、刻痕、池壁都会积影，这是「看着平」和「看着被凿开」的分界
   float occlusion = max(carveAO, carveShade);
-  diffuseColor.rgb *= mix(1.0, occlusion, 0.5);`,
+  // occlusion 是「遮蔽程度」，越大必须越暗。
+  // 原来写成 mix(1.0, occlusion, 0.7)：occlusion=1 时结果是 1.0，
+  // 等于完全遮蔽反而全亮，把刻痕做成了发白的凸起，整块石头也平白暗了一半
+  diffuseColor.rgb *= 1.0 - occlusion * 0.72;`,
         )
         .replace(
           '#include <roughnessmap_fragment>',
@@ -815,6 +997,7 @@ void main() {`,
   }, [
     carveMaterial,
     carveMap,
+    carveNormal,
     stonePBR,
     heightTexture,
     carveMaskTexture,
@@ -831,9 +1014,11 @@ void main() {`,
         geometry={geometry}
         material={carveMaterial}
         rotation={[-Math.PI / 2, 0, 0]}
-        // 抬高 0.04：最深处(0.25-0.24=0.01)仍高于石沿底面(-0.03)，
-        // 否则雕刻面会在石沿底下探出来，沿边缘露出一排锯齿
-        position={[0, 0.25, 0]}
+        // 基准落在砚堂深度 0.10：砚边顶面 0.21 高出砚堂 0.11，
+        // 这正是真实砚台「砚边围合、砚堂下凹」的形制。
+        // 之前放在 0.25（几乎与砚边齐平），砚堂是平的、下面还空了一层，
+        // 从斜角看就是一块悬在砚边上的透明薄片。
+        position={[0, 0.1, 0]}
         receiveShadow
         renderOrder={0}
         onPointerDown={(event) => {
@@ -929,6 +1114,7 @@ export function Carve3D({
   stone = 'green',
   onCaptureReady,
   onUndoReady,
+  onProgress,
 }: {
   tool: CarveTool
   brushSize: number
@@ -939,6 +1125,7 @@ export function Carve3D({
   stone?: StoneVariant
   onCaptureReady?: (capture: () => string | null) => void
   onUndoReady?: (undo: () => void) => void
+  onProgress?: (ratio: number) => void
 }) {
   return (
     <Canvas
@@ -989,6 +1176,7 @@ export function Carve3D({
         showGuide={showGuide}
         stone={stone}
         onUndoReady={onUndoReady}
+        onProgress={onProgress}
       />
       <ContactShadows
         position={[0, -0.23, 0]}

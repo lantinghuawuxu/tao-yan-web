@@ -953,6 +953,133 @@
   display: block;
 }
 
+/* —— 工序条：进到雕刻台第一眼就知道现在该做什么 —— */
+.carve-brief {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: rgba(6, 18, 14, 0.55);
+  border: 1px solid rgba(199, 168, 107, 0.22);
+}
+
+.carve-brief-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.carve-brief-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: rgba(245, 241, 230, 0.38);
+}
+
+.carve-brief-steps li.active {
+  color: var(--gold-light);
+}
+
+.carve-brief-steps li.done {
+  color: rgba(245, 241, 230, 0.7);
+}
+
+.brief-num {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.carve-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: rgba(245, 241, 230, 0.6);
+}
+
+.carve-progress-bar {
+  display: block;
+  width: 120px;
+  height: 4px;
+  overflow: hidden;
+  background: rgba(245, 241, 230, 0.14);
+}
+
+.carve-progress-bar i {
+  display: block;
+  height: 100%;
+  background: var(--gold-light);
+  transition: width 0.2s ease;
+}
+
+.carve-progress b {
+  min-width: 30px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--gold-light);
+}
+
+/* —— 首次下刀指引：没有它，用户只会面对一块石头发呆 —— */
+.carve-tip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 7;
+  width: min(370px, calc(100% - 48px));
+  padding: 20px 22px;
+  transform: translate(-50%, -50%);
+  background: rgba(8, 22, 17, 0.94);
+  border: 1px solid rgba(199, 168, 107, 0.45);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.carve-tip strong {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: var(--gold-light);
+}
+
+.carve-tip ol {
+  margin: 0 0 16px;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.85;
+  color: rgba(245, 241, 230, 0.78);
+}
+
+.carve-tip b {
+  font-weight: 600;
+  color: var(--gold-light);
+}
+
+.carve-tip button {
+  width: 100%;
+  padding: 10px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  background: var(--gold-light);
+  border: 0;
+  cursor: pointer;
+}
+
 .carve-3d-modes {
   position: absolute;
   top: 12px;

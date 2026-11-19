@@ -450,9 +450,16 @@ export function createRawStoneBase(stone: RawStone) {
   return body
 }
 
-// 雕刻面：高细分矩形按原石轮廓裁剪三角形
-// 关键：只删除轮廓外的三角形，绝不把顶点压下去——
-// 压顶点会在边缘拉出垂直三角面，法线水平朝外，被打光成「尖刺」，整块砚台会烂掉
+// 雕刻面：沿原石轮廓分布的极坐标网格。
+//
+// 之前用 PlaneGeometry 再「把轮廓外的顶点吸附到边界」，问题是矩形的四个角
+// 必然落在椭圆轮廓之外很远处，四角连成的整片三角形顶点全部被压到同一条曲线上，
+// 重叠成退化三角形 —— 法线算出来是错的，光照下就是边缘一圈发亮的「塑料膜」。
+//
+// 极坐标网格每圈顶点天然沿轮廓排布，不存在压缩与重叠：
+//   · 顶点数只取 128×64 量级，比 300×190 的矩形少一个数量级，每帧位移更省
+//   · 边缘严格随形，和石沿洞口对齐后没有任何接缝
+//   · UV 仍按 GUIDE_WIDTH/HEIGHT 归一化，与高度图、砚池绘制完全一致
 export function createRawStoneCarvePlane(
   stone: RawStone,
   width: number,
@@ -461,29 +468,53 @@ export function createRawStoneCarvePlane(
   segY: number,
 ) {
   const { scaleX, scaleY } = rawScale(stone)
-  const geometry = new THREE.PlaneGeometry(width, height, segX, segY)
-  const position = geometry.attributes.position as THREE.BufferAttribute
-  const limitScale = 0.93
+  const radial = Math.max(96, Math.round(segX * 0.6))
+  const rings = Math.max(40, Math.round(segY * 0.6))
+  // 略微超出轮廓：让边缘埋进石沿实体，可见部分全在洞口以内
+  const limitScale = 1.02
 
-  // 把轮廓外的顶点「吸附」到轮廓边界上，而不是删掉它们。
-  // 删除三角形会留下顶点在轮廓外的三角形，那些顶点会采样到高度图边缘的极值，
-  // 相邻顶点位移相差数倍，沿轮廓一圈被拉成锯齿尖刺——这正是之前砚台烂掉的原因。
-  // 吸附后整块曲面平滑收成随形，边缘完整、无拉伸。
-  for (let i = 0; i < position.count; i += 1) {
-    const x = position.getX(i)
-    const yPlane = position.getY(i)
-    const nx = x / scaleX
-    const ny = -yPlane / scaleY
-    const radius = Math.hypot(nx, ny)
-    if (radius < 1e-6) continue
-    const limit = rawRadius(stone, Math.atan2(ny, nx)) * limitScale
-    if (radius > limit) {
-      const k = limit / radius
-      position.setX(i, x * k)
-      position.setY(i, yPlane * k)
+  const positions: number[] = [0, 0, 0]
+  const uvs: number[] = [0.5, 0.5]
+  const indices: number[] = []
+
+  for (let ring = 1; ring <= rings; ring += 1) {
+    const t = ring / rings
+    for (let i = 0; i < radial; i += 1) {
+      const angle = (i / radial) * Math.PI * 2
+      const radius = rawRadius(stone, angle) * limitScale * t
+      const x = Math.cos(angle) * radius * scaleX
+      const y = Math.sin(angle) * radius * scaleY
+      positions.push(x, y, 0)
+      uvs.push(x / width + 0.5, y / height + 0.5)
     }
   }
-  position.needsUpdate = true
+
+  // 中心扇面
+  for (let i = 0; i < radial; i += 1) {
+    indices.push(0, 1 + i, 1 + ((i + 1) % radial))
+  }
+  // 逐环缝合
+  for (let ring = 1; ring < rings; ring += 1) {
+    const inner = 1 + (ring - 1) * radial
+    const outer = 1 + ring * radial
+    for (let i = 0; i < radial; i += 1) {
+      const next = (i + 1) % radial
+      const a = inner + i
+      const b = inner + next
+      const c = outer + i
+      const d = outer + next
+      indices.push(a, c, d, a, d, b)
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(positions, 3),
+  )
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
   return geometry
 }
 
