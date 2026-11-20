@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# 授权与合作文件：含真实签署物件，绝不进公开仓库
+# （仓库部署在 GitHub Pages，任何提交都会公开可见）
+docs/授权文件/
+
+# 系统/编辑器的临时占用文件（Office 打开文档时会生成）
+~$*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
