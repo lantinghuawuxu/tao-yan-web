@@ -7,6 +7,7 @@ import {
   RoundedBox,
 } from '@react-three/drei'
 import * as THREE from 'three'
+import { carveSound } from './carveSound'
 import {
   createRawStoneBase,
   createRawStoneCarvePlane,
@@ -47,9 +48,14 @@ const POOL_SCALE = 0.3
 
 function getCarvePools(stone: StoneVariant) {
   return createShape(STONE_SHAPE[stone]).pools.map((pool) => {
-    const points = pool
-      .getPoints(64)
-      .map((point) => point.clone().multiplyScalar(POOL_SCALE))
+    const points = pool.getPoints(64).map((point) => {
+      const scaled = point.clone().multiplyScalar(POOL_SCALE)
+      // 砚池挪到砚堂前端。器型数据里池子是居中的，而纹样也铺满整堂，
+      // 结果池子正好压在莲心上，把纹样从中间打断——
+      // 真实随形砚的池一定在一端，砚堂留给纹样。
+      scaled.y -= 0.4
+      return scaled
+    })
     return new THREE.Shape(points)
   })
 }
@@ -60,7 +66,13 @@ function getCarvePools(stone: StoneVariant) {
 // 也就是真正的刀路笔画，大面积的明暗阴影一律丢掉。
 const LINE_GAIN = 3.4 // 线条响应增益
 const LINE_FLOOR = 0.022 // 低于这个响应当作石面噪声。0.038 会连主笔画一起滤掉，金线稀稀拉拉了
-const LINE_DEPTH = 0.28 // 刻到底处的深度（纹样只作浅刻导引，不抢用户刀痕）
+// 0.06：只留一层几不可见的「墨渗进石纹」的痕迹。
+//
+// 这里原本是 0.28（浅浮雕），结果是砚堂一打开就已经有了一整套凹槽纹样，
+// 用户的第一反应必然是「上面已经刻好了，还要我刻什么」。
+// 真实工序是反的：石面是平的，纸上描稿转到石面，刻一刀才凹一块。
+// 雕不动的地方也不该预先凹下去——那等于替他刻好了。
+const LINE_DEPTH = 0.06
 
 // 分离式最大值膨胀（先横后竖）：O(n·r)，比逐像素扫邻域的 O(n·r²) 快一个量级。
 // 原文物拓片上的线是连续的，而 AI 高度图里的笔画深浅不匀、常常断成虚线，
@@ -171,7 +183,9 @@ function compositePatternRelief(
   target.drawImage(scratch, 0, 0)
 }
 
-// 雕刻指引：与刀路同一套判据，所以金线就是「要刻的那条线」本身
+// 雕刻指引：与刀路同一套判据，所以描稿线就是「要刻的那条线」本身。
+// 输出的是「强度图」（R 通道 = 墨线浓度），不是彩色自发光——
+// 颜色交给着色器按石料深浅决定，深色石用朱砂、浅色石用墨，才在任何石头上都看得见。
 function createGuideTextureSource(
   heightImage: HTMLImageElement,
   scale = 1,
@@ -186,43 +200,48 @@ function createGuideTextureSource(
   const gray = buildGrayField(heightImage, size, scale)
   if (!gray) return null
   const line = lineField(gray, size, 8)
-  // 只加粗一遍、半径 1：纹样图里的细节线本来就密，
-  // 膨胀过头会把整片砚堂连成一整块金箔，反而看不出刀路走向
-  const dilated = dilateLine(line, size, 1, 1)
+  // 膨胀 2 遍：1 像素的线在斜视角下会被抗锯齿糊掉，
+  // 用户看的是「沿哪条线走」，线宽要够他从半米外认出来
+  const dilated = dilateLine(line, size, 2, 1)
 
   const out = context.createImageData(CANVAS_SIZE, CANVAS_SIZE)
-  const goldR = 255
-  const goldG = 206
-  const goldB = 122
-  const step = 1
-
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
-      // 0.26 以下全部压成 0：只留响应最强的骨干线。
-      // 之前几乎不过滤，整幅图的每一条细节都被当成刀路，砚堂糊成一张金箔。
-      const alpha = Math.min(1, Math.max(0, (dilated[y * size + x] - 0.26) * 2.6))
-      const x0 = Math.round(x * step)
-      const y0 = Math.round(y * step)
-      for (let dy = 0; dy < step; dy += 1) {
-        const row = (y0 + dy) * CANVAS_SIZE
-        for (let dx = 0; dx < step; dx += 1) {
-          const offset = (row + x0 + dx) * 4
-          // emissiveMap 只乘 RGB、忽略 alpha，RGB 必须按 alpha 预乘
-          out.data[offset] = Math.round(goldR * alpha)
-          out.data[offset + 1] = Math.round(goldG * alpha)
-          out.data[offset + 2] = Math.round(goldB * alpha)
-          out.data[offset + 3] = 255
-        }
-      }
+      // 阈值放宽到 0.18：宁可线多一点也别断，
+      // 断线会让人以为那里不用刻，结果刻出一幅缺笔的图
+      const amount = Math.min(1, Math.max(0, (dilated[y * size + x] - 0.18) * 2.4))
+      const offset = (y * size + x) * 4
+      const value = Math.round(amount * 255)
+      out.data[offset] = value
+      out.data[offset + 1] = value
+      out.data[offset + 2] = value
+      out.data[offset + 3] = 255
     }
   }
   context.putImageData(out, 0, 0)
 
   const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
+  // 强度图不是颜色，必须关掉 sRGB 解码，否则中间调会被压暗、线看着发灰
+  texture.colorSpace = THREE.NoColorSpace
+  // 关键：关掉 mipmap。描稿线只有 2~3 像素宽，一旦生成 mip 层级，
+  // 远景/斜视角会取到被平均过的低层级，整条线被稀释成一片淡影——
+  // 黄膘石上「只有一些黄色纹路、看不出要刻什么」就是这个原因。
+  texture.minFilter = THREE.LinearFilter
+  texture.generateMipmaps = false
   texture.anisotropy = 8
   texture.needsUpdate = true
   return { texture, canvas }
+}
+
+// 描稿色：真实匠人描稿决不会用「发光的金线」。
+// 深色石头（鹦哥绿、羊肝紫）用朱砂，浅色石头（黄膘）用墨——
+// 这是同一套对比度逻辑，也是这几块石头在工坊里实际的处理方式。
+const GUIDE_INK: Record<StoneVariant, string> = {
+  green: '#e04a2c',
+  // 黄膘石本身偏亮偏黄，墨要压到近黑才拉得开明度差；
+  // 之前 #241a10 明度还够亮，和浮雕的凹槽阴影糊在一起
+  yellow: '#140d06',
+  purple: '#ec5238',
 }
 
 // 遮罩与法线只需要「大形」，不需要 1024² 逐像素。
@@ -469,11 +488,43 @@ function CarveSurface({
       return
     }
     const next = createGuideTextureSource(patternImg, patternScale)
+    // 砚池是盛水的深坑，不该在里面描稿，也不该刻。
+    // 在描稿图上按池子轮廓挖掉，用户就不会看见「池子里也画了线」而想往里下刀。
+    if (next) {
+      const context = next.canvas.getContext('2d')
+      if (context) {
+        const scaleX = CANVAS_SIZE / GUIDE_WIDTH
+        const scaleY = CANVAS_SIZE / GUIDE_HEIGHT
+        context.save()
+        context.setTransform(
+          scaleX,
+          0,
+          0,
+          -scaleY,
+          CANVAS_SIZE / 2,
+          CANVAS_SIZE / 2,
+        )
+        context.fillStyle = '#000'
+        for (const pool of getCarvePools(stone)) {
+          const points = pool.getPoints(64)
+          if (!points.length) continue
+          context.beginPath()
+          points.forEach((point, index) => {
+            if (index === 0) context.moveTo(point.x, point.y)
+            else context.lineTo(point.x, point.y)
+          })
+          context.closePath()
+          context.fill()
+        }
+        context.restore()
+        next.texture.needsUpdate = true
+      }
+    }
     setGuide(next)
     return () => {
       next?.texture.dispose()
     }
-  }, [patternImg, patternScale])
+  }, [patternImg, patternScale, stone])
 
   // 调试：把高度图、辅助线与场景暴露到 window，便于在浏览器里直接核对
   const scene = useThree((state) => state.scene)
@@ -502,7 +553,10 @@ function CarveSurface({
     // 位移只需要承载「大凹槽」的轮廓，细刻线全交给 bumpMap 逐像素计算。
     // 之前 560×360（20 万顶点）每帧重算位移是卡顿的主因之一，降到 300×190 后
     // 顶点数只剩 1/3.5，而观感几乎无损
-    () => createRawStoneCarvePlane(stone, GUIDE_WIDTH, GUIDE_HEIGHT, 300, 190),
+    // 420×260 ≈ 11 万顶点。300×190 时格子边长 6.2px，细刻刀（宽 3~5px）
+    // 比一个格子还窄，位移直接「漏格」，刻出来是断续的锯齿。
+    // 560×360（20 万顶点）实测会掉帧，420 是这个平衡点。
+    () => createRawStoneCarvePlane(stone, GUIDE_WIDTH, GUIDE_HEIGHT, 420, 260),
     [stone],
   )
 
@@ -517,6 +571,7 @@ function CarveSurface({
   const drawingRef = useRef(false)
   const lastUvRef = useRef<THREE.Vector2 | null>(null)
   const normalUpdatePendingRef = useRef(false)
+  const brushParamsRef = useRef({ tool, brushSize })
   const maskFrameRef = useRef(0)
 
   // 动刀进度网格：可刻区域内一共多少格，已经动过多少格
@@ -626,6 +681,10 @@ function CarveSurface({
   useEffect(() => () => bodyGeometry.dispose(), [bodyGeometry])
   useEffect(() => () => baseGeometry.dispose(), [baseGeometry])
 
+  // 刀口参数走 ref：paint 是每次 render 新建的闭包，但挂到 window 上的调试入口
+  // 和 R3F 的事件回调都可能持有旧引用，读 ref 才能保证永远是最新档位
+  brushParamsRef.current = { tool, brushSize }
+
   const paint = (uv: THREE.Vector2) => {
     const heightContext = heightCanvas.getContext('2d')
     if (!heightContext) return
@@ -650,11 +709,15 @@ function CarveSurface({
 
     const x = uv.x * CANVAS_SIZE
     const y = (1 - uv.y) * CANVAS_SIZE
-    const toolScale = tool === 'fine' ? 0.55 : tool === 'polish' ? 1.75 : 1
-    const baseRadius = Math.max(9, brushSize * 1.15) * toolScale
+    const activeTool = brushParamsRef.current.tool
+    const activeBrush = brushParamsRef.current.brushSize
+    const toolScale = activeTool === 'fine' ? 0.55 : activeTool === 'polish' ? 1.75 : 1
+    // 下限从 9 降到 3：之前滑块拉到最细仍被这个下限托住，
+    // 细刻刀的世界宽度约 1.4% 砚宽（≈1.5mm），比真实刻刀粗 3 倍
+    const baseRadius = Math.max(3, activeBrush * 0.85) * toolScale
     // 每种刀的目标深度：用「不透明目标灰度」落到石面，
     // 同一处刻到目标深度后不再加深——这才是凿刻，而不是无限叠加变白
-    const targetDepth = tool === 'chisel' ? 234 : tool === 'fine' ? 214 : 140
+    const targetDepth = activeTool === 'chisel' ? 234 : activeTool === 'fine' ? 214 : 140
 
     const stamp = (
       stampX: number,
@@ -663,16 +726,27 @@ function CarveSurface({
       dirY: number,
       pressure: number,
     ) => {
-      const radius = baseRadius * (tool === 'polish' ? 1 : pressure)
+      const radius = baseRadius * (activeTool === 'polish' ? 1 : pressure)
       const angle = Math.atan2(dirY, dirX)
       const depth = Math.round(targetDepth * Math.min(1, 0.87 + pressure * 0.13))
 
       heightContext.save()
       heightContext.translate(stampX, stampY)
+      // UV 空间不是等比的：UV 里每像素在 x 上覆盖 2.54、在 y 上只覆盖 1.56，
+      // 相差 GUIDE_WIDTH / GUIDE_HEIGHT = 1.625 倍。
+      // 直接在这里画圆，纵向刻出来的槽会比横向粗 1.6 倍，同一把刀忽粗忽细。
+      // 先放大到「世界等距」坐标，再旋转、画圆，刀口才真正是圆的。
+      heightContext.scale(1, GUIDE_WIDTH / GUIDE_HEIGHT)
       heightContext.rotate(angle)
-      heightContext.globalCompositeOperation = 'source-over'
+      // 凿刻必须单调加深：用 lighten（逐像素取更深的那个）。
+      // 之前用 source-over 叠加，已刻深处再落一刀会被混合回去——
+      // 这就是「在空白处下刀，刻纹两边又长出新石料」的真正原因。
+      heightContext.globalCompositeOperation = 'lighten'
 
-      if (tool === 'polish') {
+      if (activeTool === 'polish') {
+        // 打磨必须能「变浅」，所以这里要换回 source-over：
+        // lighten 只会取更深的值，拿它打磨等于完全没反应
+        heightContext.globalCompositeOperation = 'source-over'
         // 打磨：以石面基准灰柔和回填，压掉毛刺、保留大起伏
         const softGradient = heightContext.createRadialGradient(0, 0, 0, 0, 0, radius)
         softGradient.addColorStop(0, 'rgba(128,128,128,0.95)')
@@ -683,35 +757,30 @@ function CarveSurface({
         heightContext.arc(0, 0, radius, 0, Math.PI * 2)
         heightContext.fill()
       } else {
-        const isChisel = tool === 'chisel'
+        const isChisel = activeTool === 'chisel'
         // 刀口尺寸：凿子宽而短，细刻窄而长
         const length = radius * (isChisel ? 2.4 : 1.8)
         const width = radius * (isChisel ? 0.62 : 0.8)
-        // 一条渐变同时编码「隆起石屑(凸) — 槽壁 — 平槽底 — 隆起石屑(凸)」。
-        // 没有唇边，凹槽就只是石面上一条暗痕，不像被凿开。
-        // 高度图语义：128 = 石面基准，越小越高，越大越深。
-        // 关键是槽壁要陡：之前唇边到槽底横跨 0.28 的宽度做渐变，
-        // 位移出来是一道缓坡，看着像被手指按下去的软泥；收窄到 0.055 才是凿断的断崖。
-        const lip = isChisel ? 103 : 109
+        // 断面：石面 → 断崖 → 平槽底 → 断崖 → 石面。
+        // 之前两侧各有一道「隆起唇边」(103/109，高于石面基准)：
+        // 单看一刀像凿开的石屑，但连刻几刀就在刻痕两侧堆出一圈新石料，
+        // 尤其在你已经刻过的地方再下刀，等于把刚刻的槽两侧又垫高了。
+        // 真实阴刻的石屑是会被吹掉的，两侧就该是平的。
+        // 凿断感改由「陡壁 + 槽底刀痕 + 崩口 + 着色器 AO」共同给出。
         const deep = Math.min(255, depth + 14)
-        const profile = heightContext.createLinearGradient(
-          0,
-          -width * 1.55,
-          0,
-          width * 1.55,
-        )
-        profile.addColorStop(0, `rgba(${lip},${lip},${lip},0)`)
-        profile.addColorStop(0.1, `rgba(${lip},${lip},${lip},0.9)`)
-        profile.addColorStop(0.19, 'rgba(128,128,128,0)')
-        profile.addColorStop(0.245, `rgba(${depth},${depth},${depth},0.98)`)
+        const profile = heightContext.createLinearGradient(0, -width, 0, width)
+        profile.addColorStop(0, 'rgba(128,128,128,0)')
+        profile.addColorStop(0.2, 'rgba(128,128,128,0)')
+        // 0.2 → 0.34 完成石面到槽底的落差：14% 的刀宽走完全部深度，
+        // 位移出来是一道接近垂直的壁，而不是被手指按下去的缓坡
+        profile.addColorStop(0.34, `rgba(${depth},${depth},${depth},0.95)`)
         profile.addColorStop(0.5, `rgba(${deep},${deep},${deep},1)`)
-        profile.addColorStop(0.755, `rgba(${depth},${depth},${depth},0.98)`)
-        profile.addColorStop(0.81, 'rgba(128,128,128,0)')
-        profile.addColorStop(0.9, `rgba(${lip},${lip},${lip},0.9)`)
-        profile.addColorStop(1, `rgba(${lip},${lip},${lip},0)`)
+        profile.addColorStop(0.66, `rgba(${depth},${depth},${depth},0.95)`)
+        profile.addColorStop(0.8, 'rgba(128,128,128,0)')
+        profile.addColorStop(1, 'rgba(128,128,128,0)')
         heightContext.fillStyle = profile
         heightContext.beginPath()
-        heightContext.ellipse(0, 0, length, width * 1.55, 0, 0, Math.PI * 2)
+        heightContext.ellipse(0, 0, length, width, 0, 0, Math.PI * 2)
         heightContext.fill()
 
         // 刀痕：沿走刀方向在槽底压出几道深浅不一的平行刻线。
@@ -759,6 +828,10 @@ function CarveSurface({
       const dirY = distance > 0 ? dy / distance : 0
       // 慢刀重、快刀轻
       const pressure = Math.max(0.55, Math.min(1.2, 1.35 - distance / 36))
+      // 音色跟着刀走：走刀越快摩擦越响、音调越高；每一刀再叠一记崩裂声。
+      // 这比任何视觉细节都更能让人觉得「刀在石头上走」
+      carveSound.setTone(baseRadius * 2, distance)
+      if (activeTool !== 'polish') carveSound.strike(pressure)
       const steps = Math.max(
         1,
         Math.ceil(distance / Math.max(2, baseRadius * 0.16)),
@@ -767,7 +840,7 @@ function CarveSurface({
         const progress = step / steps
         // 走刀顿挫：沿垂直方向轻微摆动，模拟手工刀痕
         const jitter =
-          tool === 'polish' ? 0 : (Math.random() - 0.5) * baseRadius * 0.22
+          activeTool === 'polish' ? 0 : (Math.random() - 0.5) * baseRadius * 0.22
         stamp(
           lastX + dx * progress - jitter * dirY,
           lastY + dy * progress + jitter * dirX,
@@ -786,23 +859,29 @@ function CarveSurface({
     const guideContext = guide?.canvas.getContext('2d')
     if (guideContext) {
       // 用黑色往上盖，而不是 destination-out：
-      // emissiveMap 只读 RGB、忽略 alpha，只把 alpha 擦掉的话金线不会消失。
+      // 描稿图是强度图，涂黑 = 强度 0 = 不绘制。
+      // 擦除范围必须和笔刷一样走「世界等距」变换，否则沿纵向刻时
+      // 擦掉的范围会横向偏宽，把旁边还没刻的稿线一起抹了。
+      guideContext.save()
+      guideContext.setTransform(1, 0, 0, 1, 0, 0)
+      guideContext.translate(x, y)
+      guideContext.scale(1, GUIDE_WIDTH / GUIDE_HEIGHT)
+      const eraseRadius = baseRadius * 1.25
       const fade = guideContext.createRadialGradient(
-        x,
-        y,
         0,
-        x,
-        y,
-        baseRadius * 1.3,
+        0,
+        0,
+        0,
+        0,
+        eraseRadius,
       )
       fade.addColorStop(0, 'rgba(0,0,0,1)')
-      fade.addColorStop(0.7, 'rgba(0,0,0,0.95)')
+      fade.addColorStop(0.72, 'rgba(0,0,0,1)')
       fade.addColorStop(1, 'rgba(0,0,0,0)')
-      guideContext.save()
       guideContext.globalCompositeOperation = 'source-over'
       guideContext.fillStyle = fade
       guideContext.beginPath()
-      guideContext.arc(x, y, baseRadius * 1.3, 0, Math.PI * 2)
+      guideContext.arc(0, 0, eraseRadius, 0, Math.PI * 2)
       guideContext.fill()
       guideContext.restore()
     }
@@ -940,37 +1019,59 @@ function CarveSurface({
     // 精度等于贴图分辨率，能刻画细刻线；而 512 的 CPU 法线图会把细线抹成缓坡。
     material.bumpMap = heightTexture
     // 负号：高度图里白=深，凹凸要往下凹才是「刻进去」。
-    // 幅度收到 0.5：几何已经做了真实位移 + computeVertexNormals，
-    // 再叠一层强 bump 会让槽壁法线翻过来，掠射光一打就成一片发白的高光
-    material.bumpScale = -0.5
+    // 0.72：细刻只有 3~5px 宽，远小于几何网格（420 格 / 2.6 单位 = 每格 6.2px），
+    // 位移根本表达不出来，全靠 bump 逐像素求法线。0.5 时细线几乎看不出深度
+    material.bumpScale = -0.72
     // 位移不再走 material.displacementMap —— 实测在这块几何上它完全没有生效，
     // 雕刻面始终是一张纯平面（包围盒 y 跨度只有场景倾斜的 0.13，没有位移量）。
     // 改在下面 onBeforeCompile 里直接注入顶点着色器，确定性地把顶点压下去。
     material.displacementMap = null
     material.displacementScale = 0
     material.displacementBias = 0
-    // 辅助线：暖白自发光。纯白 × 1.45 在深色石面上会烧成一片死白，
-    // 失去「金线」的意味；降到暖调 1.2，既有金感又不刺眼
-    material.emissive.set('#ffe9bd')
-    material.emissiveMap = showGuide && guide ? guide.texture : null
-    material.emissiveIntensity = showGuide && guide ? 1.2 : 0
+    // 描稿不再走自发光。自发光是「石头自己亮起来」，观感像嵌在石里的 LED 灯带；
+    // 而且浅色石头上，亮金线根本没有对比度——黄膘石那版几乎看不见就是这原因。
+    // 改为在着色器里当「墨」混进漫反射：朱砂描在深色石上、墨描在浅色石上，
+    // 随石面起伏受光，看起来就是匠人刚画上去的稿。
+    material.emissiveMap = null
+    material.emissiveIntensity = 0
 
     const deepColor = new THREE.Color(STONE_CARVE[stone])
     const maskTexture = carveMaskTexture
+    const guideTexture = guide?.texture ?? null
+    const inkColor = new THREE.Color(GUIDE_INK[stone])
+    const guideOn = showGuide && guide ? 1 : 0
     material.onBeforeCompile = (shader) => {
       shader.uniforms.uCarveMask = { value: maskTexture }
       shader.uniforms.uDeepColor = { value: deepColor }
+      shader.uniforms.uGuideMap = { value: guideTexture }
+      shader.uniforms.uGuideInk = { value: inkColor }
+      shader.uniforms.uGuideStrength = { value: guideOn }
+      // 必须自己传一份「原始 UV」。
+      // three 的 vMapUv 会被 map 的 repeat/offset 变换过，而石纹贴图设了
+      // repeat(2,2) —— 直接用它采样描稿图，只会显示左上四分之一，
+      // 整幅莲花只剩左下角一块。刻痕遮罩同样错位。
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          'void main() {',
+          `varying vec2 vInkUv;
+void main() {`,
+        )
+        .replace('#include <uv_vertex>', '#include <uv_vertex>\n  vInkUv = uv;')
       shader.fragmentShader = shader.fragmentShader
         .replace(
           'void main() {',
           `uniform sampler2D uCarveMask;
+uniform sampler2D uGuideMap;
 uniform vec3 uDeepColor;
+uniform vec3 uGuideInk;
+uniform float uGuideStrength;
+varying vec2 vInkUv;
 void main() {`,
         )
         .replace(
           '#include <map_fragment>',
           `#include <map_fragment>
-  vec4 carveSample = texture2D(uCarveMask, vMapUv);
+  vec4 carveSample = texture2D(uCarveMask, vInkUv);
   float carveAmount = carveSample.r;
   float carveAO = carveSample.g;
   float carveShade = carveSample.b;
@@ -983,7 +1084,18 @@ void main() {`,
   // occlusion 是「遮蔽程度」，越大必须越暗。
   // 原来写成 mix(1.0, occlusion, 0.7)：occlusion=1 时结果是 1.0，
   // 等于完全遮蔽反而全亮，把刻痕做成了发白的凸起，整块石头也平白暗了一半
-  diffuseColor.rgb *= 1.0 - occlusion * 0.72;`,
+  diffuseColor.rgb *= 1.0 - occlusion * 0.72;
+
+  // 朱砂/墨描稿：叠在石面之上。
+  // 注意：这里**不能**乘 (1 - carveAmount)。carveAmount 是从整张高度图算的，
+  // 凡比石面深一点都算「刻痕」——预置的纹样浮雕（0.28 深）也被算进去，
+  // 于是描稿在纹样区域被整片抹掉，只剩最浅的一小块能看见。
+  // 刻过之后描稿消失，靠的是 paint() 里把 guide 画布对应位置涂黑。
+  float inkRaw = texture2D(uGuideMap, vInkUv).r * uGuideStrength;
+  // smoothstep 把 0.15~0.5 之间压成一段陡坡：线要么是实的，要么完全没有。
+  // 线性映射会让整条线都是半透明，远看只剩一片脏
+  float inkAmount = smoothstep(0.15, 0.5, inkRaw);
+  diffuseColor.rgb = mix(diffuseColor.rgb, uGuideInk, inkAmount);`,
         )
         .replace(
           '#include <roughnessmap_fragment>',
@@ -1023,6 +1135,10 @@ void main() {`,
         onPointerDown={(event) => {
           if (orbit) return
           event.stopPropagation()
+          // AudioContext 必须在这个手势里创建，否则浏览器会挂起音频上下文
+          carveSound.ensure()
+          carveSound.setEngaged(true)
+          carveSound.setTone(brushSize, 0)
           drawingRef.current = true
           lastUvRef.current = null
           snapshot()
@@ -1032,14 +1148,17 @@ void main() {`,
           if (!orbit && drawingRef.current && event.uv) paint(event.uv)
         }}
         onPointerUp={() => {
+          carveSound.setEngaged(false)
           drawingRef.current = false
           lastUvRef.current = null
         }}
         onPointerLeave={() => {
+          carveSound.setEngaged(false)
           drawingRef.current = false
           lastUvRef.current = null
         }}
         onPointerCancel={() => {
+          carveSound.setEngaged(false)
           drawingRef.current = false
           lastUvRef.current = null
         }}

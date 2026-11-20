@@ -5,6 +5,7 @@ import {
   type ChangeEvent,
 } from 'react'
 import { Carve3D } from '../components/Carve3D'
+import { carveSound } from '../components/carveSound'
 import { InkstoneViewer } from '../components/InkstoneViewer'
 import { PatternRelief } from '../components/PatternRelief'
 import '../Studio.css'
@@ -117,7 +118,7 @@ const stepMeta = [
   {
     label: '纹样',
     title: '挑一个纹样，作为下刀的依据',
-    desc: '从传统纹样中选择一个作为辅助线。它不是标准答案，最终构图仍由你决定。',
+    desc: '从传统纹样中选一个，它会以朱砂描稿的形式落在砚堂上，成为你的刀路。最终构图仍由你决定。',
   },
   {
     label: '雕刻',
@@ -199,7 +200,10 @@ function Studio() {
   const [carveProgress, setCarveProgress] = useState(0)
   const [briefOpen, setBriefOpen] = useState(true)
   const [tool, setTool] = useState<Tool>('chisel')
-  const [brushSize, setBrushSize] = useState(28)
+  // 默认 18（≈0.6mm 刀宽）：28 那档刻出来像把凿子一直在刮，不是刻线
+  const [brushSize, setBrushSize] = useState(18)
+  // 凿石声默认开：没有声音，下刀就只剩「拖了一个色块」的感觉
+  const [soundOn, setSoundOn] = useState(true)
   const [artwork, setArtwork] = useState<string | null>(null)
   const [finishedAt, setFinishedAt] = useState('')
 
@@ -651,7 +655,7 @@ function Studio() {
                 <div className="studio-panel">
                   <h2 className="panel-title">选择雕刻纹样</h2>
                   <p className="panel-desc">
-                    下面是对应的真实洮砚照片，选一个纹样作为参考。金色辅助线会叠加在石面上，最终构图仍由你决定。
+                    下面是对应的真实洮砚照片，选一个纹样作为参考。选好后，这道纹样会用朱砂（或墨）描在你的砚堂上——那是匠人开工前在石头上画的稿，也是你接下来要刻掉的线。
                   </p>
 
                   <div className="pattern-grid">
@@ -783,7 +787,7 @@ function Studio() {
                   {/* 工序条：打开就知道现在该干什么，而不是面对一块石头发呆 */}
                   <div className="carve-brief">
                     <ol className="carve-brief-steps">
-                      {['粗雕 · 顺金线走刀', '细刻 · 修内部细节', '打磨 · 收光去毛刺'].map(
+                      {['粗雕 · 顺朱砂线走刀', '细刻 · 修内部细节', '打磨 · 收光去毛刺'].map(
                         (label, index) => (
                           <li
                             key={label}
@@ -837,8 +841,8 @@ function Studio() {
                       <input
                         id="brush-size"
                         type="range"
-                        min="10"
-                        max="64"
+                        min="6"
+                        max="52"
                         value={brushSize}
                         onChange={(event) =>
                           setBrushSize(Number(event.target.value))
@@ -848,6 +852,17 @@ function Studio() {
                     </div>
 
                     <div className="tool-actions">
+                      <button
+                        type="button"
+                        className={soundOn ? 'on' : ''}
+                        onClick={() => {
+                          const next = !soundOn
+                          setSoundOn(next)
+                          carveSound.setMuted(!next)
+                        }}
+                      >
+                        {soundOn ? '声音 · 开' : '声音 · 关'}
+                      </button>
                       <button
                         type="button"
                         onClick={() => undoRef.current?.()}
@@ -911,21 +926,28 @@ function Studio() {
                       <span className="carve-hint">
                         {carve3DMode === 'orbit'
                           ? '拖动旋转 · 滚轮缩放'
-                          : '按住拖动，在石面上刻出真实 3D 凹槽'}
+                          : tool === 'polish'
+                            ? '按住拖动，把刻过的面收光压平'
+                            : '按住鼠标，沿朱砂描稿拖过去'}
                       </span>
                       {briefOpen && carve3DMode === 'carve' && (
                         <div className="carve-tip" role="dialog" aria-label="雕刻指引">
-                          <strong>怎么下刀</strong>
+                          <strong>石面上已经替你描好稿了</strong>
                           <ol>
                             <li>
-                              石面上那条<b>金线</b>就是纹样刀路 ——
-                              按住鼠标，沿着它拖过去。
+                              砚堂上那些<b>朱砂（或墨）线条</b>，就是匠人开工前
+                              在石头上画的稿 —— 你的任务只有一个：
+                              <b>沿着这些线把石头刻掉</b>。
+                            </li>
+                            <li>
+                              按住鼠标拖动下刀。线在哪，刀就往哪走；
+                              线外的地方是石面，不用管。
                             </li>
                             <li>
                               先大后小：<b>粗凿</b>定轮廓 → <b>细刀</b>修内部 →
                               <b>打磨</b>收光。
                             </li>
-                            <li>刻过的线会自己消失，跟着剩下的线走就行。</li>
+                            <li>刻过的线会自己消失 —— 剩下没消失的，就是还没刻的。</li>
                           </ol>
                           <button
                             type="button"
@@ -988,7 +1010,7 @@ function Studio() {
                     <strong>{stageNames[carveStage]}</strong>
                     <p>
                       {carveStage === 0
-                        ? '用粗凿顺金线定出纹样轮廓，不必刻深。'
+                        ? '用粗凿顺着朱砂线定出纹样轮廓，不必刻深。'
                         : carveStage === 1
                           ? '换细刀修内部细节，线条之间要留出石面。'
                           : '打磨收光，把毛刺和凿出的唇边压平。'}
@@ -1005,7 +1027,7 @@ function Studio() {
                     onClick={() => setShowGuide((current) => !current)}
                   >
                     <span className="toggle-dot" />
-                    {showGuide ? '辅助线：开（照着金线刻）' : '辅助线：关（自由刻）'}
+                    {showGuide ? '描稿：开（朱砂线=要刻的地方）' : '描稿：关（自由创作）'}
                   </button>
                   <div className="side-card side-note">
                     <span>关于虚拟雕刻</span>
@@ -1075,6 +1097,9 @@ function Studio() {
       <footer className="studio-footer">
         <div className="wrap">
           <span>陇上砚语 · 技术为非遗服务</span>
+          <span className="build-tag">
+            版本 {__BUILD_COMMIT__} · 构建于 {__BUILD_TIME__}（UTC）
+          </span>
           <a href="#top">返回首页</a>
         </div>
       </footer>
