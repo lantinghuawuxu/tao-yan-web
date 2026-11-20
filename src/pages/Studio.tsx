@@ -200,8 +200,9 @@ function Studio() {
   const [carveProgress, setCarveProgress] = useState(0)
   const [briefOpen, setBriefOpen] = useState(true)
   const [tool, setTool] = useState<Tool>('chisel')
-  // 默认 18（≈0.6mm 刀宽）：28 那档刻出来像把凿子一直在刮，不是刻线
-  const [brushSize, setBrushSize] = useState(18)
+  // 默认 14（≈0.9mm 刀宽）：比描稿线（1.4mm）略窄，
+  // 刀压上去正好把线吃掉，不会一刀连旁边的稿一起抹掉
+  const [brushSize, setBrushSize] = useState(14)
   // 凿石声默认开：没有声音，下刀就只剩「拖了一个色块」的感觉
   const [soundOn, setSoundOn] = useState(true)
   const [artwork, setArtwork] = useState<string | null>(null)
@@ -219,6 +220,14 @@ function Studio() {
   const scanning = step === 2 && !scanned
   // 动刀进度 → 当前工序：先粗后细再收光，是砚雕的固定次序
   const carveStage = carveProgress < 0.25 ? 0 : carveProgress < 0.7 ? 1 : 2
+  // 刀口实际宽度（mm）。雕刻面 1024px 对应 260mm，1px ≈ 0.25mm。
+  // 系数必须和 Carve3D 里那套完全一致，否则滑块上写的数字是假的
+  const knifeMm =
+    Math.max(1.6, brushSize * 0.34) *
+    (tool === 'fine' ? 0.55 : tool === 'polish' ? 1.75 : 1) *
+    (tool === 'fine' ? 0.52 : tool === 'polish' ? 1 : 0.6) *
+    2 *
+    0.254
   const stageNames = ['粗雕', '细刻', '打磨']
   const analysis = customImage
     ? {
@@ -841,14 +850,14 @@ function Studio() {
                       <input
                         id="brush-size"
                         type="range"
-                        min="6"
-                        max="52"
+                        min="4"
+                        max="44"
                         value={brushSize}
                         onChange={(event) =>
                           setBrushSize(Number(event.target.value))
                         }
                       />
-                      <span>{brushSize}px</span>
+                      <span>{knifeMm.toFixed(1)}mm</span>
                     </div>
 
                     <div className="tool-actions">
@@ -964,8 +973,11 @@ function Studio() {
                           style={{
                             left: cursorPos.x,
                             top: cursorPos.y,
-                            width: brushSize,
-                            height: brushSize,
+                            // 光标圈要贴着真实刀宽走：之前直接拿滑块值当直径，
+                            // 14 档画出一个 14px 的圈，比实际刀口大三四倍，
+                            // 一眼就先觉得「刀太粗」
+                            width: Math.max(6, Math.round(brushSize * 0.55)),
+                            height: Math.max(6, Math.round(brushSize * 0.55)),
                           }}
                         />
                       )}
