@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import * as THREE from 'three'
+import { asset } from '../lib/asset'
 
 export type StoneVariant = 'green' | 'yellow' | 'purple'
 
@@ -23,19 +24,19 @@ const SOURCES: Record<
   { color: string; normal: string; rough: string }
 > = {
   green: {
-    color: 'textures/inkstone/green_color.jpg',
-    normal: 'textures/inkstone/green_normal.jpg',
-    rough: 'textures/inkstone/green_rough.jpg',
+    color: asset('textures/inkstone/green_color.jpg'),
+    normal: asset('textures/inkstone/green_normal.jpg'),
+    rough: asset('textures/inkstone/green_rough.jpg'),
   },
   yellow: {
-    color: 'textures/inkstone/yellow_color.jpg',
-    normal: 'textures/inkstone/yellow_normal.jpg',
-    rough: 'textures/inkstone/yellow_rough.jpg',
+    color: asset('textures/inkstone/yellow_color.jpg'),
+    normal: asset('textures/inkstone/yellow_normal.jpg'),
+    rough: asset('textures/inkstone/yellow_rough.jpg'),
   },
   purple: {
-    color: 'textures/inkstone/purple_color.jpg',
-    normal: 'textures/inkstone/purple_normal.jpg',
-    rough: 'textures/inkstone/purple_rough.jpg',
+    color: asset('textures/inkstone/purple_color.jpg'),
+    normal: asset('textures/inkstone/purple_normal.jpg'),
+    rough: asset('textures/inkstone/purple_rough.jpg'),
   },
 }
 

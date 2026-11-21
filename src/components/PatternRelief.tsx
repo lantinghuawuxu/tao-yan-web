@@ -1,12 +1,22 @@
 import { useEffect, useRef } from 'react'
 import type { InkstonePattern } from './inkstoneGeometry'
+import { asset } from '../lib/asset'
 
 // 与 3D 雕刻面用的是同一套高度图：预览即所得
 const HEIGHT_SRC: Record<InkstonePattern, string> = {
-  lotus: 'textures/patterns/lotus_height.png',
-  cloud: 'textures/patterns/cloud_height.png',
-  wave: 'textures/patterns/wave_height.png',
-  meander: 'textures/patterns/meander_height.png',
+  lotus: asset('textures/patterns/lotus_height.png'),
+  cloud: asset('textures/patterns/cloud_height.png'),
+  wave: asset('textures/patterns/wave_height.png'),
+  meander: asset('textures/patterns/meander_height.png'),
+}
+
+// 石料底材贴图：与 3D 用的是同一批烘焙贴图。
+// 写成静态表而不是拼字符串，一是 asset() 需要完整路径，二是构建期校验脚本
+// 要能逐个确认文件真的存在（动态拼接的路径它查不了）。
+const STONE_COLOR_SRC: Record<string, string> = {
+  green: asset('textures/inkstone/green_color.jpg'),
+  yellow: asset('textures/inkstone/yellow_color.jpg'),
+  purple: asset('textures/inkstone/purple_color.jpg'),
 }
 
 // 石料贴图缺失时的兜底底色
@@ -175,9 +185,11 @@ export function PatternRelief({
       context.putImageData(out, 0, 0)
     }
 
+    const stoneSrc = STONE_COLOR_SRC[stone]
+
     Promise.all([
       loadImage(HEIGHT_SRC[id]),
-      loadImage(`textures/inkstone/${stone}_color.jpg`).catch(() => null),
+      stoneSrc ? loadImage(stoneSrc).catch(() => null) : Promise.resolve(null),
     ])
       .then(([patternImage, stoneImage]) => render(patternImage, stoneImage))
       .catch(() => render(null, null))

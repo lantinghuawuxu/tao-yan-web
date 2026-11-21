@@ -8,6 +8,7 @@ import { Carve3D } from '../components/Carve3D'
 import { carveSound } from '../components/carveSound'
 import { InkstoneViewer } from '../components/InkstoneViewer'
 import { PatternRelief } from '../components/PatternRelief'
+import { asset } from '../lib/asset'
 import '../Studio.css'
 
 type Step = 1 | 2 | 3 | 4 | 5
@@ -31,7 +32,7 @@ const stones: Stone[] = [
     id: 'green',
     name: '鹦哥绿',
     subtitle: '喇嘛崖 · 深绿细润',
-    image: 'images/stone-green.jpg',
+    image: asset('images/stone-green.jpg'),
     completeness: 94,
     cracks: 1,
     carvable: 82,
@@ -42,7 +43,7 @@ const stones: Stone[] = [
     id: 'yellow',
     name: '黄膘石',
     subtitle: '喇嘛崖 · 金黄石膘',
-    image: 'images/stone-yellow.jpg',
+    image: asset('images/stone-yellow.jpg'),
     completeness: 91,
     cracks: 2,
     carvable: 76,
@@ -53,7 +54,7 @@ const stones: Stone[] = [
     id: 'purple',
     name: '紫石',
     subtitle: '喇嘛崖 · 上紫下绿',
-    image: 'images/stone-purple.jpg',
+    image: asset('images/stone-purple.jpg'),
     completeness: 88,
     cracks: 2,
     carvable: 71,
@@ -75,7 +76,7 @@ const patterns: {
     name: '莲纹',
     note: '清雅吉祥',
     meaning: '莲花出淤泥而不染，是洮砚最常见的传统题材之一，常与砚池、水波一起构图。',
-    image: 'images/inkstones/lianwen-yuan.jpg',
+    image: asset('images/inkstones/lianwen-yuan.jpg'),
     shape: '圆形砚',
   },
   {
@@ -83,7 +84,7 @@ const patterns: {
     name: '云纹',
     note: '如意绵延',
     meaning: '云气纹在洮砚与汉藏装饰中都有悠久传统，线条回旋，寓意吉祥绵延。',
-    image: 'images/inkstones/heyu-tuoyuan.jpg',
+    image: asset('images/inkstones/heyu-tuoyuan.jpg'),
     shape: '椭圆砚',
   },
   {
@@ -91,7 +92,7 @@ const patterns: {
     name: '水波',
     note: '顺势而刻',
     meaning: '顺着洮河石天然水纹构图，因石施艺，是洮砚“相石而作”的典型思路。',
-    image: 'images/inkstones/shuangchi-suxian.jpg',
+    image: asset('images/inkstones/shuangchi-suxian.jpg'),
     shape: '随形砚',
   },
   {
@@ -99,7 +100,7 @@ const patterns: {
     name: '回纹',
     note: '绵长不断',
     meaning: '回纹以连续折线寓意绵延不绝，常作为砚台边饰，稳重而有秩序。',
-    image: 'images/inkstones/zhezhi-changfang.jpg',
+    image: asset('images/inkstones/zhezhi-changfang.jpg'),
     shape: '长方砚',
   },
 ]
@@ -465,7 +466,12 @@ function Studio() {
                         }`}
                         onClick={() => selectStone(item)}
                       >
-                        <img src={item.image} alt={item.name} />
+                        <img
+                          src={item.image}
+                          alt={item.name}
+                          loading="lazy"
+                          decoding="async"
+                        />
                         <span className="stone-option-info">
                           <strong>{item.name}</strong>
                           <span>{item.subtitle}</span>
@@ -499,7 +505,12 @@ function Studio() {
 
                 <div className="preview-panel">
                   <div className="preview-frame">
-                    <img src={activeImage} alt={materialName} />
+                    <img
+                      src={activeImage}
+                      alt={materialName}
+                      fetchPriority="high"
+                      decoding="async"
+                    />
                     <span className="preview-tag">当前石料</span>
                     <span className="preview-name">
                       {materialName} · {customImage ? '自定义上传' : stone.subtitle}
@@ -628,7 +639,12 @@ function Studio() {
                       scanning ? 'scanning' : ''
                     }`}
                   >
-                    <img src={activeImage} alt={materialName} />
+                    <img
+                      src={activeImage}
+                      alt={materialName}
+                      fetchPriority="high"
+                      decoding="async"
+                    />
                     {scanning && (
                       <>
                         <span className="scan-grid" aria-hidden="true" />
@@ -682,6 +698,7 @@ function Studio() {
                             src={item.image}
                             alt={`${item.name} · ${item.shape}`}
                             loading="lazy"
+                            decoding="async"
                           />
                         </span>
                         <span className="pattern-text">
@@ -1055,7 +1072,13 @@ function Studio() {
               <div className="result-layout">
                 <div className="result-art">
                   {artwork ? (
-                    <img src={artwork} alt="我的数字洮砚作品" />
+                    <img
+                      src={artwork}
+                      alt="我的数字洮砚作品"
+                      width={1200}
+                      height={800}
+                      decoding="async"
+                    />
                   ) : (
                     <div className="result-placeholder">作品生成中…</div>
                   )}

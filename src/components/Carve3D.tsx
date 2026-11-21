@@ -8,6 +8,7 @@ import {
 } from '@react-three/drei'
 import * as THREE from 'three'
 import { carveSound } from './carveSound'
+import { asset } from '../lib/asset'
 import {
   createRawStoneBase,
   createRawStoneCarvePlane,
@@ -38,10 +39,10 @@ const STONE_SHAPE: Record<StoneVariant, InkstoneShape> = {
 
 // 纹样浮雕高度图：按真实洮砚照片构图生成的黑白浮雕（反相后黑=凸、白=凹），映射到雕刻面
 const PATTERN_HEIGHT_SRC: Record<InkstonePattern, string> = {
-  lotus: 'textures/patterns/lotus_height.png',
-  cloud: 'textures/patterns/cloud_height.png',
-  wave: 'textures/patterns/wave_height.png',
-  meander: 'textures/patterns/meander_height.png',
+  lotus: asset('textures/patterns/lotus_height.png'),
+  cloud: asset('textures/patterns/cloud_height.png'),
+  wave: asset('textures/patterns/wave_height.png'),
+  meander: asset('textures/patterns/meander_height.png'),
 }
 
 // 砚池缩放：createShape 的砚池尺寸为完整砚台设计，缩放到 2.6×1.6 雕刻面内
@@ -1535,7 +1536,7 @@ export function Carve3D({
     >
       <Suspense fallback={null}>
         <Environment
-          files="models/hdri/studio_small_08_1k.hdr"
+          files={asset('models/hdri/studio_small_08_1k.hdr')}
           background={false}
           environmentIntensity={0.12}
         />

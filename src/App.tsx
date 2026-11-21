@@ -1,15 +1,15 @@
-import { Suspense, useEffect, useMemo, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
-import {
-  ContactShadows,
-  Environment,
-  OrbitControls,
-  useGLTF,
-} from '@react-three/drei'
-import * as THREE from 'three'
-import Gallery from './pages/Gallery'
-import Studio from './pages/Studio'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import ErrorBoundary from './components/ErrorBoundary'
+import LazyStage from './components/LazyStage'
+import { asset } from './lib/asset'
 import './App.css'
+
+// 3D 画布与图鉴 / 工作室都是按需代码：
+// 主包只留首页 DOM 与样式，three.js / drei 全部进独立 chunk，
+// 手机首屏不必先下完 1.4MB 才能看到文字和图片。
+const StoneStage = lazy(() => import('./components/StoneStage'))
+const Gallery = lazy(() => import('./pages/Gallery'))
+const Studio = lazy(() => import('./pages/Studio'))
 
 const navItems = [
   { label: '项目缘起', href: '#culture' },
@@ -45,27 +45,27 @@ const painPoints = [
 
 const stones = [
   {
-    image: 'images/stone-snow.jpg',
+    image: asset('images/stone-snow.jpg'),
     name: '鹦哥绿 · 水泉湾',
     note: '细密水纹，温润如脂',
   },
   {
-    image: 'images/stone-yellow.jpg',
+    image: asset('images/stone-yellow.jpg'),
     name: '黄膘 · 喇嘛崖',
     note: '金黄石膘，洮砚标志',
   },
   {
-    image: 'images/stone-color.jpg',
+    image: asset('images/stone-color.jpg'),
     name: '五彩云纹膘',
     note: '五彩交织，纹理如云',
   },
   {
-    image: 'images/stone-green.jpg',
+    image: asset('images/stone-green.jpg'),
     name: '细水纹 · 老坑',
     note: '天然纹理，一石一面',
   },
   {
-    image: 'images/stone-purple.jpg',
+    image: asset('images/stone-purple.jpg'),
     name: '紫石 · 喇嘛崖',
     note: '上紫下绿，石质珍罕',
   },
@@ -126,135 +126,6 @@ const timeline = [
     text: '「匠心砚」团队走进卓尼，用 3D 与 AI 记录原石、器型与纹样。',
   },
 ]
-
-function StoneModel() {
-  const { scene } = useGLTF('models/boulder_01/boulder_01_1k.gltf')
-
-  const model = useMemo(() => {
-    const clone = scene.clone(true)
-    clone.updateMatrixWorld(true)
-
-    const box = new THREE.Box3().setFromObject(clone)
-    const size = box.getSize(new THREE.Vector3())
-    const maxDimension = Math.max(size.x, size.y, size.z)
-    const scale = 2.4 / maxDimension
-    clone.scale.setScalar(scale)
-    clone.updateMatrixWorld(true)
-
-    const scaledBox = new THREE.Box3().setFromObject(clone)
-    const center = scaledBox.getCenter(new THREE.Vector3())
-    clone.position.x -= center.x
-    clone.position.z -= center.z
-    clone.position.y -= scaledBox.min.y + 1.0
-
-    clone.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true
-        child.receiveShadow = true
-        const materials = Array.isArray(child.material)
-          ? child.material
-          : [child.material]
-        const tinted = materials.map((material) => {
-          const next = material.clone()
-          if (next instanceof THREE.MeshStandardMaterial) {
-            next.color.set('#7f9d8c')
-            next.roughness = 0.88
-            next.metalness = 0.02
-            next.envMapIntensity = 0.6
-          }
-          return next
-        })
-        child.material = Array.isArray(child.material)
-          ? tinted
-          : tinted[0]
-      }
-    })
-
-    return clone
-  }, [scene])
-
-  useEffect(() => {
-    return () => {
-      model.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          const materials = Array.isArray(child.material)
-            ? child.material
-            : [child.material]
-          for (const material of materials) material.dispose()
-        }
-      })
-    }
-  }, [model])
-
-  return (
-    <group rotation={[0.16, -0.5, 0.08]}>
-      <primitive object={model} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.02, 0]}>
-        <ringGeometry args={[1.6, 1.68, 96]} />
-        <meshBasicMaterial
-          color="#c7a86b"
-          transparent
-          opacity={0.42}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-    </group>
-  )
-}
-
-useGLTF.preload('models/boulder_01/boulder_01_1k.gltf')
-
-function StoneStage() {
-  return (
-    <Canvas
-      dpr={[1, 2]}
-      shadows
-      camera={{ position: [0, 1.3, 5.2], fov: 38 }}
-      gl={{ alpha: true, antialias: true }}
-    >
-      <ambientLight intensity={0.55} />
-      <directionalLight
-        position={[4, 6, 4]}
-        intensity={2.4}
-        castShadow
-        shadow-mapSize={[1024, 1024]}
-      />
-      <pointLight position={[-4, -2, -3]} intensity={1.4} color="#8fbfae" />
-      <spotLight
-        position={[0, 5, 1]}
-        angle={0.6}
-        penumbra={1}
-        intensity={1.8}
-        color="#e2d0a6"
-      />
-      <Suspense fallback={null}>
-        <Environment
-          files="models/hdri/studio_small_08_1k.hdr"
-          background={false}
-        />
-        <StoneModel />
-      </Suspense>
-      <ContactShadows
-        position={[0, -1.06, 0]}
-        opacity={0.5}
-        scale={7}
-        blur={2.4}
-        far={4}
-        color="#07110e"
-      />
-      <OrbitControls
-        makeDefault
-        enablePan={false}
-        autoRotate
-        autoRotateSpeed={0.7}
-        minDistance={3.4}
-        maxDistance={7.5}
-        minPolarAngle={0.7}
-        maxPolarAngle={Math.PI / 1.9}
-      />
-    </Canvas>
-  )
-}
 
 function Home() {
   const [scrolled, setScrolled] = useState(false)
@@ -344,15 +215,23 @@ function Home() {
         <section className="hero">
           <img
             className="hero-mountains"
-            src="images/mountains.png"
+            src={asset('images/mountains.png')}
+            width={902}
+            height={298}
             alt=""
             aria-hidden="true"
+            fetchPriority="high"
+            decoding="async"
           />
           <img
             className="hero-lotus"
-            src="images/lotus.png"
+            src={asset('images/lotus.png')}
+            width={502}
+            height={680}
             alt=""
             aria-hidden="true"
+            fetchPriority="high"
+            decoding="async"
           />
 
           <div className="wrap">
@@ -413,7 +292,10 @@ function Home() {
             <div className="intro-visual" data-reveal>
               <div className="intro-frame">
                 <img
-                  src="images/stone-veined.jpg"
+                  src={asset('images/stone-veined.jpg')}
+                  width={440}
+                  height={368}
+                  decoding="async"
                   alt="洮砚原石上的白色石花与水波纹理"
                 />
               </div>
@@ -499,7 +381,13 @@ function Home() {
             <div className="stone-grid">
               {stones.map((stone) => (
                 <figure className="stone-card" key={stone.name} data-reveal>
-                  <img src={stone.image} alt={stone.name} loading="lazy" />
+                  <img
+                    className="stone-img"
+                    src={stone.image}
+                    alt={stone.name}
+                    loading="lazy"
+                    decoding="async"
+                  />
                   <figcaption className="stone-info">
                     <strong>{stone.name}</strong>
                     <span>{stone.note}</span>
@@ -571,7 +459,54 @@ function Home() {
                 <span className="stage-tag">数字原石 · 交互预览</span>
                 <span className="stage-live">LIVE 3D</span>
               </div>
-              <StoneStage />
+              <LazyStage
+                placeholder={
+                  <div className="stage-placeholder">
+                    <span className="stage-placeholder-title">
+                      数字原石 · 加载中
+                    </span>
+                    <span className="stage-placeholder-note">
+                      滚动到这里时加载 3D 预览，避免和首屏图片抢网速
+                    </span>
+                  </div>
+                }
+              >
+              {/*
+                两道保险：
+                Suspense —— 3D chunk 还在下载时显示占位
+                ErrorBoundary —— 模型 / HDR 拉取失败时只废掉这一块，
+                                 不让异常冒到根节点把整页卸成白屏
+              */}
+              {(inView) => (
+                <ErrorBoundary
+                  fallback={
+                    <div className="stage-placeholder">
+                      <span className="stage-placeholder-title">
+                        3D 预览加载失败
+                      </span>
+                      <span className="stage-placeholder-note">
+                        刷新页面可重试；图片与文字不受影响
+                      </span>
+                    </div>
+                  }
+                >
+                  <Suspense
+                    fallback={
+                      <div className="stage-placeholder">
+                        <span className="stage-placeholder-title">
+                          正在加载 3D 预览…
+                        </span>
+                        <span className="stage-placeholder-note">
+                          首次加载约 5MB 模型资源，请稍候
+                        </span>
+                      </div>
+                    }
+                  >
+                    <StoneStage inView={inView} />
+                  </Suspense>
+                </ErrorBoundary>
+              )}
+              </LazyStage>
               <span className="stage-hint">
                 拖拽旋转 · 滚轮缩放
               </span>
@@ -659,6 +594,29 @@ function Home() {
   )
 }
 
+function PageLoading() {
+  return (
+    <div className="page-loading" role="status" aria-live="polite">
+      <span className="page-loading-seal" aria-hidden="true">
+        砚
+      </span>
+      <span>正在加载…</span>
+    </div>
+  )
+}
+
+function PageFailed() {
+  return (
+    <div className="page-loading" role="alert">
+      <span className="page-loading-seal" aria-hidden="true">
+        砚
+      </span>
+      <span>页面加载失败，请刷新重试</span>
+      <a href="#top">返回首页</a>
+    </div>
+  )
+}
+
 function App() {
   const [hash, setHash] = useState(() => window.location.hash)
 
@@ -674,8 +632,24 @@ function App() {
     }
   }, [hash])
 
-  if (hash === '#studio') return <Studio />
-  if (hash === '#inkstones') return <Gallery />
+  if (hash === '#studio') {
+    return (
+      <ErrorBoundary fallback={<PageFailed />}>
+        <Suspense fallback={<PageLoading />}>
+          <Studio />
+        </Suspense>
+      </ErrorBoundary>
+    )
+  }
+  if (hash === '#inkstones') {
+    return (
+      <ErrorBoundary fallback={<PageFailed />}>
+        <Suspense fallback={<PageLoading />}>
+          <Gallery />
+        </Suspense>
+      </ErrorBoundary>
+    )
+  }
 
   return <Home />
 }

@@ -4,6 +4,7 @@ import {
   type InkstonePattern,
   type InkstoneShape as Shape,
 } from '../components/InkstoneViewer'
+import { asset } from '../lib/asset'
 import '../Gallery.css'
 
 type Inkstone = {
@@ -18,7 +19,7 @@ type Inkstone = {
 const inkstones: Inkstone[] = [
   {
     id: 'heyu',
-    image: 'images/inkstones/heyu-tuoyuan.jpg',
+    image: asset('images/inkstones/heyu-tuoyuan.jpg'),
     title: '荷鱼纹椭圆砚',
     note: '莲叶、游鱼与天然双色石膘',
     shape: '椭圆',
@@ -27,7 +28,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'jinbiao',
-    image: 'images/inkstones/jinbiao-renwu.jpg',
+    image: asset('images/inkstones/jinbiao-renwu.jpg'),
     title: '金膘人物长方砚',
     note: '金黄石膘与人物雕刻',
     shape: '长方',
@@ -36,7 +37,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'shanshui',
-    image: 'images/inkstones/shanshui-suixing.jpg',
+    image: asset('images/inkstones/shanshui-suixing.jpg'),
     title: '山水随形砚',
     note: '砚池随形，边缘雕山水人物',
     shape: '随形',
@@ -45,7 +46,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'shuangchi',
-    image: 'images/inkstones/shuangchi-suxian.jpg',
+    image: asset('images/inkstones/shuangchi-suxian.jpg'),
     title: '双池素面砚',
     note: '一大一小双砚池，保留天然水纹',
     shape: '双池',
@@ -54,7 +55,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'huaye',
-    image: 'images/inkstones/huaye-suixing.jpg',
+    image: asset('images/inkstones/huaye-suixing.jpg'),
     title: '花叶随形砚',
     note: '花叶与云气纹环绕砚边',
     shape: '随形',
@@ -63,7 +64,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'huaye-changfang',
-    image: 'images/inkstones/huaye-changfang.jpg',
+    image: asset('images/inkstones/huaye-changfang.jpg'),
     title: '花叶长方砚',
     note: '满工花叶，砚池居中',
     shape: '长方',
@@ -72,7 +73,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'zhushi',
-    image: 'images/inkstones/zhushi-changfang.jpg',
+    image: asset('images/inkstones/zhushi-changfang.jpg'),
     title: '竹石长方砚',
     note: '竹枝与山石沿砚边展开',
     shape: '长方',
@@ -81,7 +82,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'zhezhi',
-    image: 'images/inkstones/zhezhi-changfang.jpg',
+    image: asset('images/inkstones/zhezhi-changfang.jpg'),
     title: '折枝花长方砚',
     note: '浅浮雕折枝花，配木座',
     shape: '长方',
@@ -90,7 +91,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'shinv',
-    image: 'images/inkstones/shinv-xianke.jpg',
+    image: asset('images/inkstones/shinv-xianke.jpg'),
     title: '仕女线刻长方砚',
     note: '线刻仕女、梧桐与竹',
     shape: '长方',
@@ -99,7 +100,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'lianwen',
-    image: 'images/inkstones/lianwen-yuan.jpg',
+    image: asset('images/inkstones/lianwen-yuan.jpg'),
     title: '莲纹圆砚',
     note: '圆形砚面，浮雕莲花',
     shape: '圆形',
@@ -108,7 +109,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'renwu',
-    image: 'images/inkstones/renwu-shanshui.jpg',
+    image: asset('images/inkstones/renwu-shanshui.jpg'),
     title: '人物山水椭圆砚',
     note: '人物与山水同构',
     shape: '椭圆',
@@ -117,7 +118,7 @@ const inkstones: Inkstone[] = [
   },
   {
     id: 'chanzhi',
-    image: 'images/inkstones/chanzhi-yuan.jpg',
+    image: asset('images/inkstones/chanzhi-yuan.jpg'),
     title: '缠枝纹圆砚',
     note: '满工缠枝纹，线条连续',
     shape: '圆形',
@@ -264,7 +265,12 @@ function Gallery() {
                 className={`inkstone-card ${index === 0 ? 'featured' : ''}`}
                 onClick={() => setActive(item)}
               >
-                <img src={item.image} alt={item.title} loading="lazy" />
+                <img
+                  src={item.image}
+                  alt={item.title}
+                  loading="lazy"
+                  decoding="async"
+                />
                 <span className="inkstone-shape">{item.shape}</span>
                 <span className="inkstone-info">
                   <strong>{item.title}</strong>
@@ -319,7 +325,12 @@ function Gallery() {
               ×
             </button>
             <div className="modal-image">
-              <img src={active.image} alt={active.title} />
+              <img
+                src={active.image}
+                alt={active.title}
+                fetchPriority="high"
+                decoding="async"
+              />
             </div>
             <div className="modal-info">
               <span className="modal-shape">{active.shape}</span>

@@ -7,6 +7,7 @@ import {
   RoundedBox,
 } from '@react-three/drei'
 import * as THREE from 'three'
+import { asset } from '../lib/asset'
 import {
   createGroovedBody,
   createShape,
@@ -118,7 +119,7 @@ export function InkstoneViewer({
     >
       <Suspense fallback={null}>
         <Environment
-          files="models/hdri/studio_small_08_1k.hdr"
+          files={asset('models/hdri/studio_small_08_1k.hdr')}
           background={false}
           environmentIntensity={0.2}
         />

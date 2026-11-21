@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import * as THREE from 'three'
+import { asset } from '../lib/asset'
 
 type RockTextures = {
   map: THREE.Texture | null
@@ -19,9 +20,9 @@ export function useRockTextures(repeat = 2): RockTextures {
     const loader = new THREE.TextureLoader()
 
     Promise.all([
-      loader.loadAsync('textures/stone/rock_05_diff_1k.jpg'),
-      loader.loadAsync('textures/stone/rock_05_nor_gl_1k.jpg'),
-      loader.loadAsync('textures/stone/rock_05_rough_1k.jpg'),
+      loader.loadAsync(asset('textures/stone/rock_05_diff_1k.jpg')),
+      loader.loadAsync(asset('textures/stone/rock_05_nor_gl_1k.jpg')),
+      loader.loadAsync(asset('textures/stone/rock_05_rough_1k.jpg')),
     ])
       .then(([map, normalMap, roughnessMap]) => {
         if (cancelled) {

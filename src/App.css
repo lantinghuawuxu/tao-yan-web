@@ -689,6 +689,9 @@
 .stone-card img {
   width: 100%;
   height: 100%;
+  /* 兜底：网格行高被外部样式覆盖成 auto 时，图片仍按比例占位，
+     不会在图片到达前把卡片压成 0 高 */
+  aspect-ratio: 4 / 3;
   object-fit: cover;
   transition: transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1385,4 +1388,79 @@
   .intro-badge strong {
     font-size: 19px;
   }
+}
+
+/* ---------- 3D 舞台：进视口才挂载 ---------- */
+
+/* 包住画布的容器：必须撑满 .stage 的固定高度，
+   否则占位块与画布切换时整页高度会跳一下 */
+.lazy-stage {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+}
+
+.stage-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.stage-placeholder-title {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  letter-spacing: 0.16em;
+  color: var(--gold-light);
+}
+
+.stage-placeholder-note {
+  max-width: 240px;
+  font-size: 11px;
+  line-height: 1.9;
+  letter-spacing: 0.06em;
+  color: rgba(245, 241, 230, 0.42);
+}
+
+/* ---------- 页面级懒加载兜底 ---------- */
+
+/* #studio / #inkstones 首次进入要下载对应 chunk，这里给一个品牌色的加载态，
+   而不是白屏（白屏会被当成「网站挂了」） */
+.page-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.22em;
+}
+
+.page-loading-seal {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--cinnabar);
+  color: var(--cinnabar);
+  font-family: var(--font-serif);
+  font-size: 24px;
+}
+
+.page-loading a {
+  color: var(--cinnabar);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 2px;
 }
