@@ -72,28 +72,27 @@ function getCarvePools(stone: StoneVariant) {
 //      下刀就压掉三四根线，看上去就是「周围一大片都没了」。
 //
 // 真实匠人拿到拓片会先「取势」：只描外轮廓和大转折，叶脉这类纹理直接舍弃。
-// 下面三步就是把这个判断做成算法：
-//   1) 降到 320 提取 —— 1024 下 3.2 个像素合成一格，细支脉在这一级被平均掉
-//   2) 梯度 + 非极大值抑制 —— 每条边上只剩 1 个像素，得到真正的「线」
-//   3) 按梯度强度取最强的 38% —— 密度与纹样图无关，换哪张图都一样稀疏
-//
-// 第 2 步是关键。上一版用的是「局部均值减自身」的高通：浮雕图里的形体是缓坡过渡，
-// 高通会在整个坡面上都给正值，出来是一圈宽带而不是一条线；阈值一卡，
-// 宽带就断成一串粗块 —— 描稿变成一圈糊在石头上的白斑，比没有描稿更糟。
-// 梯度只认「变化最快的位置」，再沿梯度方向做非极大值抑制，
-// 每条轮廓才塌缩成一根笔画，刀能跟得住。
-const STROKE_SIZE = 320
-const STROKE_SMOOTH = 3
-const STROKE_FLOOR = 0.05
-const STROKE_KEEP = 0.3
-// 描稿线在 1024 画布上的宽度：放大后膨胀 1 遍半径 2 再糊 1px，
-// 落下来约 7px（按 200mm 砚宽折算 ≈1.4mm），是毛笔细线画在石面上的真实粗细，
-// 比刀宽略宽一点点 —— 刀压上去刚好把线吃掉，两边不留残线
-const STROKE_PAD = 2
-// 预置凹深：只留一层几不可见的「墨渗进石纹」。
-// 原本 0.28（浅浮雕）会让砚堂一打开就已经有整套凹槽，用户必然以为「已经刻好了」。
-// 真实工序是反的：石面是平的，描稿在石上，刻一刀才凹一块。
-const LINE_DEPTH = 0.05
+// 但「取势」不能靠梯度阈值来实现 —— 试过 Canny（Sobel + 非极大值抑制 +
+// 双阈值滞后），在这张图上得到的是一团红麻：浮雕图里没有硬边，
+// 每一道缓坡的中线都被当成轮廓，几百条互不相干的抖动曲线糊满砚面。
+// 现在改用形态学黑帽（闭运算 - 原图）找「比周围暗的细结构」，见 planStrokes。
+// 描稿线宽：1024 画布上膨胀 1 遍半径 1，再糊 1px，落下来约 3~4px
+// （按 1024px = 260mm 折算 ≈0.9mm），与 1mm 级细刀匹配。
+// 上一版膨胀半径 2 让线宽到 7px（1.8mm），刀口比线还窄，刻上去两边一定留残线。
+const STROKE_PAD = 1
+// 暗线提取的形态学半径（1024 画布像素）。半径 4 只认「宽度 < 8px 的暗线」，
+// 正好是这张浮雕图里荷叶边、花瓣轮廓、叶脉的尺度；再大就会把整片暗部当成线。
+const STROKE_RADIUS = 4
+// 黑帽响应阈值（灰度 0~1）。0.15 实测在莲纹图上落到 ~9% 覆盖率：
+// 主轮廓全在，叶脉细支脉大部分被滤掉 —— 这个密度才刻得动。
+const STROKE_THRESHOLD = 0.15
+// 预置浮雕幅度：纹样做成「凸起」，压到石面基准 0.5 **以下**（0.5 - 0.04 = 0.46）。
+// 这是为了和刻痕彻底分开 —— 刻痕是凹（>0.5），浮雕是凸（<0.5），
+// 两者在高度图上不再抢同一段灰度，刻痕着色（carveAmount 从 0.52 起）碰不到浮雕。
+// 上一版浮雕也写成「凹」（0.5 + 0.05 = 0.55），正好压在细刀刻痕（0.56）上，
+// 于是整片纹样都被当成「已刻」染成暗色，描稿和浮雕一起糊成一团。
+const LINE_DEPTH = 0.04
+
 
 // 分离式最大值膨胀（先横后竖）：O(n·r)，比逐像素扫邻域的 O(n·r²) 快一个量级。
 // 原文物拓片上的线是连续的，而 AI 高度图里的笔画深浅不匀、常常断成虚线，
@@ -134,6 +133,49 @@ function dilateLine(
   return src
 }
 
+// 灰度形态学（分离式，先横后竖）：O(n·r)。
+// 暗线提取的闭运算由它两步拼出来：先膨胀取邻域最亮、再腐蚀取邻域最暗。
+function morphGray(
+  src: Float32Array,
+  size: number,
+  radius: number,
+  mode: 'dilate' | 'erode',
+) {
+  const r = Math.max(1, Math.round(radius))
+  const pick = mode === 'dilate' ? Math.max : Math.min
+  const seed = mode === 'dilate' ? 0 : 1
+  const tmp = new Float32Array(size * size)
+  const out = new Float32Array(size * size)
+  for (let y = 0; y < size; y += 1) {
+    const row = y * size
+    for (let x = 0; x < size; x += 1) {
+      let acc = seed
+      for (let k = -r; k <= r; k += 1) {
+        acc = pick(acc, src[row + Math.min(size - 1, Math.max(0, x + k))])
+      }
+      tmp[row + x] = acc
+    }
+  }
+  for (let x = 0; x < size; x += 1) {
+    for (let y = 0; y < size; y += 1) {
+      let acc = seed
+      for (let k = -r; k <= r; k += 1) {
+        acc = pick(acc, tmp[Math.min(size - 1, Math.max(0, y + k)) * size + x])
+      }
+      out[y * size + x] = acc
+    }
+  }
+  return out
+}
+
+function dilateGray(src: Float32Array, size: number, radius: number) {
+  return morphGray(src, size, radius, 'dilate')
+}
+
+function erodeGray(src: Float32Array, size: number, radius: number) {
+  return morphGray(src, size, radius, 'erode')
+}
+
 function buildGrayField(
   image: HTMLImageElement,
   size: number,
@@ -162,209 +204,62 @@ function buildGrayField(
   return gray
 }
 
-// Sobel 梯度 + 非极大值抑制：把每条轮廓塌缩成 1 像素宽。
-// 这是简化版 Canny 的核心两步，去掉双阈值滞后（我们用百分位截断代替）。
-function strokeEdgeField(gray: Float32Array, size: number) {
-  const gx = new Float32Array(size * size)
-  const gy = new Float32Array(size * size)
-  const mag = new Float32Array(size * size)
 
-  for (let y = 1; y < size - 1; y += 1) {
-    const row = y * size
-    for (let x = 1; x < size - 1; x += 1) {
-      const i = row + x
-      const tl = gray[i - size - 1]
-      const tc = gray[i - size]
-      const tr = gray[i - size + 1]
-      const ml = gray[i - 1]
-      const mr = gray[i + 1]
-      const bl = gray[i + size - 1]
-      const bc = gray[i + size]
-      const br = gray[i + size + 1]
-      const dx = tr - tl + 2 * (mr - ml) + (br - bl)
-      const dy = bl - tl + 2 * (bc - tc) + (br - tr)
-      gx[i] = dx
-      gy[i] = dy
-      mag[i] = Math.sqrt(dx * dx + dy * dy)
-    }
-  }
-
-  const thin = new Float32Array(size * size)
-  for (let y = 1; y < size - 1; y += 1) {
-    const row = y * size
-    for (let x = 1; x < size - 1; x += 1) {
-      const i = row + x
-      const value = mag[i]
-      if (value <= 0) continue
-      const ax = Math.abs(gx[i])
-      const ay = Math.abs(gy[i])
-      let before: number
-      let after: number
-      // 沿梯度方向取前后两个邻居比较。梯度方向只量化成水平/垂直/两条对角，
-      // 对「要一条看得懂的线」这个用途，插值精度没有意义
-      if (ax > ay * 2.414) {
-        before = mag[i - 1]
-        after = mag[i + 1]
-      } else if (ay > ax * 2.414) {
-        before = mag[i - size]
-        after = mag[i + size]
-      } else if (gx[i] * gy[i] > 0) {
-        before = mag[i - size - 1]
-        after = mag[i + size + 1]
-      } else {
-        before = mag[i - size + 1]
-        after = mag[i + size - 1]
-      }
-      if (value >= before && value >= after) thin[i] = value
-    }
-  }
-  return thin
-}
-
-// 描稿笔画规划：低分辨率取势 → 细线化 → 按强度截断。
-// 输出一张 320×320 的二值笔画图，密度由 STROKE_KEEP 控制，与纹样图繁简无关。
+// 描稿笔画规划：暗线（black-hat）提取 → 阈值 → 加粗。
+//
+// 为什么不再用 Canny 边缘检测：这张纹样图是浮雕渲染图，形体之间全是柔和渐变，
+// 真正的「硬边」几乎没有。Sobel 会把每一道缓坡的中线都当成轮廓，
+// 在砚面上刷出上百条互不相干的抖动曲线 —— 看上去是一团红麻，不是图案。
+// 换成形态学黑帽（闭运算 - 原图）才对路：它找的是「比周围暗的细结构」，
+// 也就是这张图里真正画出来的荷叶边、花瓣轮廓、叶脉。
+// 而且直接在 1024 上算，线本身就是 1024 精度，不再有 320 放大后的台阶感。
 function planStrokes(image: HTMLImageElement, scale: number) {
-  const size = STROKE_SIZE
+  const size = CANVAS_SIZE
   const gray = buildGrayField(image, size, scale)
   if (!gray) return null
 
-  // 先糊掉叶脉级细节：320 上半径 3 的盒式模糊等于 1024 下 10px，
-  // 花瓣里的支脉在这一步就被抹平了，只剩大形的轮廓还有梯度
-  const smooth = blurGray(gray, size, STROKE_SMOOTH)
-  const thin = strokeEdgeField(smooth, size)
-
-  // Sobel 满量程约 4（灰度 0~1），归一化到 0~1 才能和阈值放到同一把尺子上
-  const NORM = 4
-  const histogram = new Uint32Array(256)
-  let counted = 0
-  for (let i = 0; i < thin.length; i += 1) {
-    if (thin[i] <= STROKE_FLOOR) continue
-    const bin = Math.min(255, Math.floor((thin[i] / NORM) * 255))
-    histogram[bin] += 1
-    counted += 1
-  }
-
-  // 百分位截断定「强阈值」。
-  // 用直方图而不是排序 —— 10 万个浮点排序要一两百毫秒，直方图是 O(n)
-  let strongThreshold = 0.12
-  if (counted > 0) {
-    const wanted = Math.max(1, Math.round(counted * STROKE_KEEP))
-    let accumulated = 0
-    for (let bin = 255; bin >= 0; bin -= 1) {
-      accumulated += histogram[bin]
-      if (accumulated >= wanted) {
-        strongThreshold = Math.max(0.12, bin / 255)
-        break
-      }
+  // 先糊 1px：AI 图的锯齿边会被形态学放大成毛刺
+  const smooth = blurGray(gray, size, 1)
+  // 黑帽 = 闭运算（先膨胀取亮、再腐蚀取暗）- 原图
+  const closed = erodeGray(
+    dilateGray(smooth, size, STROKE_RADIUS),
+    size,
+    STROKE_RADIUS,
+  )
+  const mask = new Float32Array(size * size)
+  let kept = 0
+  for (let i = 0; i < mask.length; i += 1) {
+    if (closed[i] - smooth[i] > STROKE_THRESHOLD) {
+      mask[i] = 1
+      kept += 1
     }
   }
-  // 阈值统一换算回 Sobel 的原始量纲，后面在 1024 上直接比
-  return {
-    magnitude: thin,
-    size,
-    strong: strongThreshold * NORM,
-    weak: strongThreshold * 0.45 * NORM,
-  }
-}
 
-// 把幅值图上采样到 1024 再做滞后阈值，得到最终的描稿强度图。
-//
-// 为什么不直接在 320 上二值化再放大：320 的一个像素等于 1024 的 3.2 个，
-// 放大出来的线是一节一节的台阶，阈值一压又变成锯齿，
-// 屏幕上看着像手抖画出来的波浪线。先把「软」的幅值图插值放大，
-// 阈值留到 1024 上再下刀，线的抖动就被插值抹平了，轮廓是平滑的曲线。
-function strokeCanvasFromPlan(plan: {
-  magnitude: Float32Array
-  size: number
-  strong: number
-  weak: number
-}) {
-  const size = CANVAS_SIZE
-  const small = document.createElement('canvas')
-  small.width = plan.size
-  small.height = plan.size
-  const smallContext = small.getContext('2d')
-  if (!smallContext) return null
-  const smallImage = smallContext.createImageData(plan.size, plan.size)
-  for (let i = 0; i < plan.magnitude.length; i += 1) {
-    const value = Math.min(255, Math.round((plan.magnitude[i] / 4) * 255))
-    smallImage.data[i * 4] = value
-    smallImage.data[i * 4 + 1] = value
-    smallImage.data[i * 4 + 2] = value
-    smallImage.data[i * 4 + 3] = 255
-  }
-  smallContext.putImageData(smallImage, 0, 0)
+  // 加粗到 ~4px 再糊 1px：1px 的线在斜视角下会被抗锯齿糊没，
+  // 而刀压上去要恰好把线吃掉，两边不留残线
+  const wide = blurGray(dilateLine(mask, size, 1, STROKE_PAD), size, 1)
 
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
   const context = canvas.getContext('2d')
   if (!context) return null
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(small, 0, 0, size, size)
-
-  const data = context.getImageData(0, 0, size, size)
-  const field = new Float32Array(size * size)
-  for (let i = 0; i < field.length; i += 1) {
-    field[i] = (data.data[i * 4] / 255) * 4
-  }
-
-  // 双阈值滞后（Canny 的第三步）。单阈值的问题是「断」：
-  // 同一根轮廓上亮一段暗一段，切下去就是一条虚线，
-  // 用户根本不知道该往哪走 —— 断线其实比密线更难刻。
-  // 这里让弱像素只要和强像素连通就一起保留，轮廓自己会连成一整根。
-  const state = new Uint8Array(size * size) // 0=丢弃 1=候选 2=保留
-  const stack: number[] = []
-  for (let i = 0; i < field.length; i += 1) {
-    const value = field[i]
-    if (value >= plan.strong) {
-      state[i] = 2
-      stack.push(i)
-    } else if (value >= plan.weak) {
-      state[i] = 1
-    }
-  }
-  while (stack.length) {
-    const index = stack.pop() as number
-    const x = index % size
-    const y = (index - x) / size
-    for (let dy = -1; dy <= 1; dy += 1) {
-      const ny = y + dy
-      if (ny < 0 || ny >= size) continue
-      for (let dx = -1; dx <= 1; dx += 1) {
-        const nx = x + dx
-        if (nx < 0 || nx >= size) continue
-        const next = ny * size + nx
-        if (state[next] === 1) {
-          state[next] = 2
-          stack.push(next)
-        }
-      }
-    }
-  }
-
-  const mask = new Float32Array(size * size)
-  for (let i = 0; i < mask.length; i += 1) {
-    mask[i] = state[i] === 2 ? 1 : 0
-  }
-
-  // 加粗到 ~7px：1px 的线在斜视角下会被抗锯齿糊没，
-  // 而刀压上去要恰好把线吃掉，两边不留残线
-  const wide = blurGray(dilateLine(mask, size, 1, STROKE_PAD), size, 1)
+  const imageData = context.createImageData(size, size)
   for (let i = 0; i < wide.length; i += 1) {
-    const value = Math.round(Math.min(1, wide[i] * 1.35) * 255)
-    data.data[i * 4] = value
-    data.data[i * 4 + 1] = value
-    data.data[i * 4 + 2] = value
-    data.data[i * 4 + 3] = 255
+    const value = Math.round(Math.min(1, wide[i] * 1.15) * 255)
+    imageData.data[i * 4] = value
+    imageData.data[i * 4 + 1] = value
+    imageData.data[i * 4 + 2] = value
+    imageData.data[i * 4 + 3] = 255
   }
-  context.putImageData(data, 0, 0)
-  return { canvas, field: wide }
+  context.putImageData(imageData, 0, 0)
+
+  // 覆盖率只用于核对密度：模式选得对，莲纹大约落在 6~12%
+  return { canvas, field: wide, coverage: kept / mask.length }
 }
 
-// 预置凹深：把描稿强度压成一层几乎看不见的浅痕，
-// 让描稿看起来是「墨渗进了石纹里」，而不是浮在石头表面的一层贴纸。
+// 预置浮雕：把描稿强度压成一层浅浮雕（凸起），
+// 让纹样在石面上「立」起来，而不是浮着的一层贴纸。
 function compositePatternRelief(
   target: CanvasRenderingContext2D,
   guide: { canvas: HTMLCanvasElement; field: Float32Array },
@@ -377,8 +272,9 @@ function compositePatternRelief(
   const data = context.createImageData(CANVAS_SIZE, CANVAS_SIZE)
   // 直接用强度场算灰度，比再采样一次画布更准，也不会被 8bit 量化卡出断点
   for (let i = 0; i < guide.field.length; i += 1) {
-    // 128 = 石面基准，往上加一点点就是「深」
-    const value = Math.round((0.5 + guide.field[i] * LINE_DEPTH) * 255)
+    // 128 = 石面基准。纹样往下减 → 凸起（< 0.5），与「凹」的刻痕分处两侧，
+    // 着色器判断刻痕从 0.52 起，永远不会把浮雕误认成已刻。
+    const value = Math.round((0.5 - guide.field[i] * LINE_DEPTH) * 255)
     data.data[i * 4] = value
     data.data[i * 4 + 1] = value
     data.data[i * 4 + 2] = value
@@ -678,17 +574,12 @@ function CarveSurface({
     return texture
   }, [carveMaskCanvas])
 
-  // 描稿笔画规划：先取势（只留大形边界），再决定疏密。
-  // 这一步是整个雕刻手感的地基 —— 稿子稀，刀才跟得上；稿子密，怎么刻都是糊。
-  const strokePlan = useMemo(
+  // 描稿强度图（1024 画布 + 强度场），浮雕与描稿共用同一份。
+  // 这里一次性算完：暗线提取、加粗、柔边都在 planStrokes 里，
+  // 不再有「320 提线 → 放大到 1024」那一层 —— 台阶与锯齿就是那一层来的。
+  const strokeCanvas = useMemo(
     () => (patternImg ? planStrokes(patternImg, patternScale) : null),
     [patternImg, patternScale],
-  )
-
-  // 强度图（320 规划 → 放大到 1024 再做滞后阈值），浮雕与描稿共用
-  const strokeCanvas = useMemo(
-    () => (strokePlan ? strokeCanvasFromPlan(strokePlan) : null),
-    [strokePlan],
   )
 
   // 描稿画布必须是可写的一份拷贝：刻过的位置要涂掉。
@@ -915,11 +806,12 @@ function CarveSurface({
     const activeTool = brushParamsRef.current.tool
     const activeBrush = brushParamsRef.current.brushSize
     const toolScale = activeTool === 'fine' ? 0.55 : activeTool === 'polish' ? 1.75 : 1
-    // 刀口半宽（1024 画布像素）。0.34 这个系数是照真实比例定的：
-    // 1024 画布 = 260mm 砚宽，1px ≈ 0.25mm，滑块 6~44 对应刀宽 0.6~4mm。
-    // 原来系数 0.85 再配 9px 下限：滑块拉到最细也是 2.6mm 的凿子，
-    // 而描稿线本身才 1.4mm —— 刀比稿线还宽一倍，怎么刻都是连稿带石一起压掉。
-    const baseRadius = Math.max(1.6, activeBrush * 0.34) * toolScale
+    // 刀口半宽（1024 画布像素）。0.30 这个系数是照真实比例定的：
+    // 1024 画布 = 260mm 砚宽，1px ≈ 0.25mm，滑块 3~40 对应刀宽 0.3~4mm。
+    // 下限收到 1.1px：再细就小于一个纹素，刻出来是一条虚线。
+    // 上一版下限 1.6 + 系数 0.34，滑块拉到最细也有 1.2mm，
+    // 而 3D 里那道槽的亮暗边还要再往外扩一像素 —— 屏幕上看着就是 3mm 宽的沟。
+    const baseRadius = Math.max(1.1, activeBrush * 0.3) * toolScale
     const worldPerPixel = GUIDE_WIDTH / CANVAS_SIZE
     const isChiselTool = activeTool === 'chisel'
     const grooveHalfWidth =
@@ -1314,18 +1206,21 @@ void main() {`,
   // 一切都在 1024 高度图上算，不再依赖 512 遮罩 ——
   // 一刀 1.5mm 的槽只有 5~6 个像素，落到 512 上剩 3px、再被双线性糊一次，
   // 侧壁就没了；而侧壁正是「刻进去一条」和「抹了一片颜色」的全部区别。
-  // ±5 个纹素求差分。±1/±2 会把 8 位量化和落刀叠印的细微起伏放大成
-  // 一根根竖着的亮暗条纹 —— 槽底明明是一条平的，看上去像梳齿。
-  // 步子放到 5（≈1.3mm），低于这个尺度的起伏一律不算「坡」。
-  float texel = 5.0 / 1024.0;
+  // ±3 个纹素求差分（≈0.76mm）。±1/±2 会把 8 位量化和落刀叠印的细微起伏
+  // 放大成一根根竖着的亮暗条纹 —— 槽底明明是一条平的，看上去像梳齿；
+  // 步子放到 5 又会让明暗往槽外各扩 1.3mm，一道 1mm 的刻线在屏幕上看着像 4mm 宽。
+  // 3 是这两个毛病之间的位置。
+  float texel = 3.0 / 1024.0;
   float hL = texture2D(uHeightMap, vInkUv - vec2(texel, 0.0)).r;
   float hR = texture2D(uHeightMap, vInkUv + vec2(texel, 0.0)).r;
   float hD = texture2D(uHeightMap, vInkUv - vec2(0.0, texel)).r;
   float hU = texture2D(uHeightMap, vInkUv + vec2(0.0, texel)).r;
 
-  // 刻痕量：只有比石面明显更深的才算。0.515 起坡、0.60 到顶，
-  // 细刀浅刻（0.58 左右）也能拿到大半，不会因为「刻得浅」就整条不见
-  float carveAmount = smoothstep(0.515, 0.60, rawHeight);
+  // 刻痕量：只有比石面明显更深的才算。
+  // 0.5 是石面基准，纹样浮雕压在 0.5 以下（凸），刻痕在 0.56 以上（凹），
+  // 两边被 0.52~0.58 这条窄坡彻底分开 —— 浮雕不会被染成「已刻」的暗色，
+  // 刻痕也不因为「刻得浅」就整条消失。
+  float carveAmount = smoothstep(0.52, 0.58, rawHeight);
   // 砚池这种大深坑（0.85 以上）不该算成一刀刻痕
   float bowlArea = smoothstep(0.80, 0.92, rawHeight);
 
@@ -1357,8 +1252,8 @@ void main() {`,
   // 亮边压在迎光的那一侧槽壁上：一条暗线 + 一条贴着它的亮边，
   // 这才是「凿进去一条」的视觉签名。宽阔的凿面则由 carveAmount 主导，
   // 不会被亮边糊成一片白。
-  diffuseColor.rgb = mix(diffuseColor.rgb, uFreshColor * 1.25, litWall);
-  diffuseColor.rgb *= 1.0 - darkWall * 0.55;
+  diffuseColor.rgb = mix(diffuseColor.rgb, uFreshColor * 1.15, litWall);
+  diffuseColor.rgb *= 1.0 - darkWall * 0.42;
 
   // 接触阴影：只作用在真正凹下去的地方（AO），不再拿方向性投影去糊周边
   diffuseColor.rgb *= 1.0 - carveAO * 0.6;

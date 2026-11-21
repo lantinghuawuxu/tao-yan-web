@@ -203,7 +203,7 @@ function Studio() {
   const [tool, setTool] = useState<Tool>('chisel')
   // 默认 14（≈0.9mm 刀宽）：比描稿线（1.4mm）略窄，
   // 刀压上去正好把线吃掉，不会一刀连旁边的稿一起抹掉
-  const [brushSize, setBrushSize] = useState(16)
+  const [brushSize, setBrushSize] = useState(11)
   // 凿石声默认开：没有声音，下刀就只剩「拖了一个色块」的感觉
   const [soundOn, setSoundOn] = useState(true)
   const [artwork, setArtwork] = useState<string | null>(null)
@@ -224,7 +224,7 @@ function Studio() {
   // 刀口实际宽度（mm）。雕刻面 1024px 对应 260mm，1px ≈ 0.25mm。
   // 系数必须和 Carve3D 里那套完全一致，否则滑块上写的数字是假的
   const knifeMm =
-    Math.max(1.6, brushSize * 0.34) *
+    Math.max(1.1, brushSize * 0.3) *
     (tool === 'fine' ? 0.55 : tool === 'polish' ? 1.75 : 1) *
     (tool === 'fine' ? 0.52 : tool === 'polish' ? 1 : 0.6) *
     2 *
@@ -867,8 +867,8 @@ function Studio() {
                       <input
                         id="brush-size"
                         type="range"
-                        min="4"
-                        max="44"
+                        min="3"
+                        max="40"
                         value={brushSize}
                         onChange={(event) =>
                           setBrushSize(Number(event.target.value))
