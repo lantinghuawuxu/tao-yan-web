@@ -61,6 +61,17 @@ export const STONE_CARVE: Record<StoneVariant, string> = {
   purple: '#3a2530',
 }
 
+// 新凿开的石口（刀口内部）比风化表层更浅、更灰。
+// 这是阴刻线能「看见」的关键：洮石表层是深绿带水锈，刀一过露出的是
+// 灰白偏绿的麻面，刀痕因此是一条比周围浅的线。
+// 之前一直拿 STONE_CARVE（比表层还深的绿）去混，混完和背景几乎同色 ——
+// 数据上 carveAmount 明明是 1，屏幕上却什么都没有，就是这个原因。
+export const STONE_FRESH: Record<StoneVariant, string> = {
+  green: '#93a189',
+  yellow: '#cbb27a',
+  purple: '#a893a0',
+}
+
 function clamp255(value: number) {
   return value < 0 ? 0 : value > 255 ? 255 : value
 }

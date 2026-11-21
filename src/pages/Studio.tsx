@@ -202,7 +202,7 @@ function Studio() {
   const [tool, setTool] = useState<Tool>('chisel')
   // 默认 14（≈0.9mm 刀宽）：比描稿线（1.4mm）略窄，
   // 刀压上去正好把线吃掉，不会一刀连旁边的稿一起抹掉
-  const [brushSize, setBrushSize] = useState(14)
+  const [brushSize, setBrushSize] = useState(16)
   // 凿石声默认开：没有声音，下刀就只剩「拖了一个色块」的感觉
   const [soundOn, setSoundOn] = useState(true)
   const [artwork, setArtwork] = useState<string | null>(null)
@@ -936,8 +936,8 @@ function Studio() {
                         {carve3DMode === 'orbit'
                           ? '拖动旋转 · 滚轮缩放'
                           : tool === 'polish'
-                            ? '按住拖动，把刻过的面收光压平'
-                            : '按住鼠标，沿朱砂描稿拖过去'}
+                            ? '按住拖动收光压平 · 滚轮推近看细节'
+                            : '按住鼠标沿朱砂描稿拖过去 · 滚轮推近看细节'}
                       </span>
                       {briefOpen && carve3DMode === 'carve' && (
                         <div className="carve-tip" role="dialog" aria-label="雕刻指引">

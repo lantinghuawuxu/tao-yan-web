@@ -19,6 +19,7 @@ import {
 } from './inkstoneGeometry'
 import {
   STONE_CARVE,
+  STONE_FRESH,
   useGreenStoneTexture,
   type StoneVariant,
 } from './useGreenStoneTexture'
@@ -404,10 +405,10 @@ const GUIDE_INK: Record<StoneVariant, string> = {
 // 遮罩与法线只需要「大形」，不需要 1024² 逐像素。
 // 之前每帧在 1024² 上跑 36 次邻域采样（约 3700 万次内存读取），这是雕刻卡顿的根源。
 // 现在先用 drawImage 让 GPU 做降采样，再只在小图上跑循环。
-// 256 → 384：刀口细到 5~6px 时，256 上一次点采样只命中 1 个像素，
-// 相邻行时有时无，刻痕遮罩就变成一条虚线，AO 跟着一块一块地闪。
-// 384 上同样的刀有 2 个像素宽，连续了；代价是每帧多 1.25 倍像素，可以接受。
-const MASK_SIZE = 384
+// 384 → 512：一刀 1.5mm 的槽在 1024 上是 5~6px，到 384 只剩 2px，
+// 浮雕（受光/背光侧壁）落不下来，刻痕就还是「一片平色」。
+// 512 上同样一道刀有 3px，够分出亮边和暗边；像素量是 384 的 1.8 倍，仍然可以每帧算。
+const MASK_SIZE = 512
 
 // 动刀进度：32×32 的粗网格记录「哪一格动过刀」。
 // 比统计刻痕面积便宜几个数量级，语义也更对——匠人关心的是稿子通没通，
@@ -512,9 +513,9 @@ function applyDisplacement(
   geometry.computeVertexNormals()
 }
 
-// R = 刻痕深度（凿掉多少）
-// G = 遮蔽 AO（凹处积影）
-// B = 方向性阴影（沿光方向被更高石面挡住的投影）
+// G = 遮蔽 AO（凹处积影、槽壁贴近处的接触阴影），着色器只用这一路。
+// R = 刻痕量、B = 方向性阴影：刻痕的颜色与侧壁明暗改成在 1024 高度图上现算了
+//     （512 上只有 2~3 个像素，分不出亮边暗边），这两路保留下来只为调试对拍。
 function rebuildCarveMask(
   heightCanvas: HTMLCanvasElement,
   maskCanvas: HTMLCanvasElement,
@@ -543,12 +544,10 @@ function rebuildCarveMask(
       const index = y * size + x
       const height = gray[index]
       // 高度图语义：中灰 0.5 = 石面基准，越大越深。
-      // 阈值 0.535 + 增益 7：刀口确实只有 0.70 左右（细刀浅刻），
+      // 阈值 0.525 + 增益 6：刀口确实只有 0.66~0.70 左右（细刀浅刻），
       // 按原来的 (h-0.52)*3 只算出 0.56 的「刻痕量」，
-      // 而深色石与刻开的新石色本来就只差一档，混 56% 等于没混 ——
-      // 槽底看不出是凿开的石头，只能看见两条被照亮的高光边。
-      // 这里把 0.535~0.68 这一小段直接拉满，浅浅一道刀也能显出石头的里子
-      const carve = Math.min(1, Math.max(0, (height - 0.535) * 7))
+      // 而刻痕要盖住整条刀口，这一小段必须直接拉满
+      const carve = Math.min(1, Math.max(0, (height - 0.515) * 5.5))
       const bowl = Math.min(1, Math.max(0, (height - soft[index]) * 2.2))
 
       // 沿光线方向往外踩点：如果踩到更高的石面（灰度更小），这里就在阴影里。
@@ -570,10 +569,10 @@ function rebuildCarveMask(
   }
 
   // 刻痕量做一次 3×3 最大值膨胀。
-  // 细刀只有 5~6px 宽的槽，在 384 上只落到 2 个像素里 ——
-  // 「被凿掉」的暗部缩到屏幕上就剩一根头发丝，剩下的全是几何 V 形的高光边，
+  // 细刀只有 5~6px 宽的槽，在遮罩上只落到 2 个像素里 ——
+  // 「被凿掉」的新石面缩到屏幕上就剩一根头发丝，剩下的全是几何 V 形的高光边，
   // 看上去像划了一道白印子，不像凿掉了一层石头。
-  // 膨胀一圈让暗部盖住整个刀口，才和位移出来的 V 形对得上。
+  // 膨胀一圈让刻痕盖住整个刀口，才和位移出来的 V 形对得上。
   const carveWide = dilateLine(carveField, size, 1, 1)
   const target = maskContext.createImageData(size, size)
   for (let index = 0; index < carveWide.length; index += 1) {
@@ -636,6 +635,13 @@ function CarveSurface({
     texture.wrapS = THREE.ClampToEdgeWrapping
     texture.wrapT = THREE.ClampToEdgeWrapping
     texture.colorSpace = THREE.NoColorSpace
+    // 高度图现在只给遮罩用（判断「刀痕」还是「砚池深坑」）。
+    // 求原始高度最怕被 mip 平均 —— 一刀 5px 的槽进到第 2 级 mip
+    // 就变成缓坡，刀痕和砚池就分不开了。
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    texture.generateMipmaps = false
+    texture.anisotropy = 8
     texture.needsUpdate = true
     return texture
   }, [heightCanvas])
@@ -656,6 +662,17 @@ function CarveSurface({
     texture.wrapS = THREE.ClampToEdgeWrapping
     texture.wrapT = THREE.ClampToEdgeWrapping
     texture.colorSpace = THREE.NoColorSpace
+    // 刻痕遮罩绝不能生成 mipmap。
+    // 遮罩只有 512²，一条 1.5mm 的刀痕在上面占 2~3 像素；一旦有 mip 链，
+    // 砚面是斜着看的、贴图屏幕覆盖又小，GPU 会选到第 3、4 级 ——
+    // 那几级早就把这条线平均成了背景值，carveAmount 恒等于 0。
+    // 表现出来就是「刻了半天什么都没刻上去」，而遮罩里明明量得到 255。
+    // 描稿图踩过同一个坑（vMapUv + mipmap），这里同样关掉，改用各向异性过滤，
+    // 斜视角下靠 aniso 采样而不是靠降级来抗锯齿。
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    texture.generateMipmaps = false
+    texture.anisotropy = 8
     texture.needsUpdate = true
     return texture
   }, [carveMaskCanvas])
@@ -722,6 +739,7 @@ function CarveSurface({
 
   // 调试：把高度图、辅助线与场景暴露到 window，便于在浏览器里直接核对
   const scene = useThree((state) => state.scene)
+  const camera = useThree((state) => state.camera)
   useEffect(() => {
     if (!import.meta.env.DEV) return
     const host = window as unknown as Record<string, unknown>
@@ -730,6 +748,7 @@ function CarveSurface({
     host.__guideCanvas = guide?.canvas ?? null
     host.__carveSound = carveSound
     host.__scene = scene
+    host.__camera = camera
   })
 
   const maskScratch = useMemo(() => {
@@ -970,57 +989,45 @@ function CarveSurface({
         // 之前细刻的横向系数(0.8)反而比凿子(0.62)大，"细刀"其实更宽
         const length = radius * (isChisel ? 2.2 : 2)
         const width = radius * (isChisel ? 0.6 : 0.52)
-        // 断面：石面 → 断崖 → 平槽底 → 断崖 → 石面。
-        // 之前两侧各有一道「隆起唇边」(103/109，高于石面基准)：
-        // 单看一刀像凿开的石屑，但连刻几刀就在刻痕两侧堆出一圈新石料，
-        // 尤其在你已经刻过的地方再下刀，等于把刚刻的槽两侧又垫高了。
-        // 真实阴刻的石屑是会被吹掉的，两侧就该是平的。
-        // 凿断感改由「陡壁 + 槽底刀痕 + 崩口 + 着色器 AO」共同给出。
-        const deep = Math.min(255, depth + 12)
+        // 断面：石面 → 斜壁 → 平槽底 → 斜壁 → 石面。
+        //
+        // 之前每一刀的中心都比两侧深 12 级灰度（"deep"），本意是做出凿子的
+        // 圆弧底，但刀是一路戳过去、每 8px 落一个印，叠加的 `lighten` 就变成
+        // 一串等间距的深坑 —— 屏幕上是一条毛虫似的锯齿带，不像一道干净的阴刻线。
+        // 槽底必须是同一个深度，锯齿感才能消掉；手上凿的不平整交给极轻的刀痕。
         const profile = heightContext.createLinearGradient(0, -width, 0, width)
-        // 陡壁的宽度按像素算，不按比例算：比例固定时，细刀的「壁」只有 0.8px，
+        // 斜壁的宽度按像素算，不按比例算：比例固定时，细刀的「壁」只有 0.8px，
         // 被抗锯齿糊成一片灰，槽就变成一团模糊的暗影。
         // 这里保证壁上至少 1px，细刀也能刻出一道有棱的线
         const wall = Math.min(0.34, Math.max(0.16, 1 / (width * 2)))
         profile.addColorStop(0, 'rgba(128,128,128,0)')
-        profile.addColorStop(wall, `rgba(${depth},${depth},${depth},0.95)`)
-        profile.addColorStop(0.5, `rgba(${deep},${deep},${deep},1)`)
-        profile.addColorStop(1 - wall, `rgba(${depth},${depth},${depth},0.95)`)
+        profile.addColorStop(wall, `rgba(${depth},${depth},${depth},1)`)
+        profile.addColorStop(1 - wall, `rgba(${depth},${depth},${depth},1)`)
         profile.addColorStop(1, 'rgba(128,128,128,0)')
         heightContext.fillStyle = profile
         heightContext.beginPath()
         heightContext.ellipse(0, 0, length, width, 0, 0, Math.PI * 2)
         heightContext.fill()
 
-        // 刀痕：沿走刀方向在槽底压出几道深浅不一的平行刻线。
-        // 这是「手凿」与「喷枪」最直观的差别——槽底永远不是光滑的。
-        const lines = isChisel ? 3 : 2
-        for (let i = 0; i < lines; i += 1) {
-          const lineY = (i - (lines - 1) / 2) * width * 0.44
-          const tone = Math.max(0, Math.min(255, depth + (i % 2 === 0 ? 16 : -12)))
-          heightContext.strokeStyle = `rgba(${tone},${tone},${tone},0.3)`
-          heightContext.lineWidth = Math.max(1, width * 0.15)
-          heightContext.beginPath()
-          heightContext.moveTo(-length * 0.66, lineY)
-          heightContext.lineTo(
-            length * 0.66,
-            lineY + (Math.random() - 0.5) * width * 0.22,
-          )
-          heightContext.stroke()
-        }
+        // 刀痕：槽底一道极浅的顺纹。只留一道、只差 6 级灰度 ——
+        // 够说明「这是凿出来的」就停，多了又会变回锯齿。
+        const tone = Math.max(0, Math.min(255, depth + 6))
+        heightContext.strokeStyle = `rgba(${tone},${tone},${tone},0.16)`
+        heightContext.lineWidth = Math.max(1, width * 0.2)
+        heightContext.beginPath()
+        heightContext.moveTo(-length * 0.6, 0)
+        heightContext.lineTo(length * 0.6, 0)
+        heightContext.stroke()
 
-        // 崩口：石质脆性剥落，在槽沿崩掉几处小口，避免边缘过于「塑料圆润」
-        const chipCount = isChisel ? 3 : 2
+        // 崩口：石质脆性剥落，在槽沿崩掉一两处小口，避免边缘过于「塑料圆润」
+        const chipCount = isChisel ? 2 : 1
         for (let i = 0; i < chipCount; i += 1) {
           const side = i % 2 === 0 ? 1 : -1
           const chipX = (Math.random() - 0.5) * length * 1.5
-          const chipY = side * width * (0.95 + Math.random() * 0.35)
-          const chipR = Math.max(
-            0.7,
-            width * (0.12 + Math.random() * 0.18),
-          )
-          const tone = Math.round(128 + (depth - 128) * (0.35 + Math.random() * 0.3))
-          heightContext.fillStyle = `rgba(${tone},${tone},${tone},0.9)`
+          const chipY = side * width * (1.0 + Math.random() * 0.3)
+          const chipR = Math.max(0.7, width * (0.1 + Math.random() * 0.14))
+          const chipTone = Math.round(128 + (depth - 128) * 0.55)
+          heightContext.fillStyle = `rgba(${chipTone},${chipTone},${chipTone},0.85)`
           heightContext.beginPath()
           heightContext.ellipse(chipX, chipY, chipR * 1.4, chipR, 0, 0, Math.PI * 2)
           heightContext.fill()
@@ -1235,13 +1242,12 @@ function CarveSurface({
     // 石头本体的微观起伏 —— 这一行是「像石头」和「像树脂」的分界
     material.normalMap = carveNormal
     material.normalScale.set(0.55, 0.55)
-    // 凹凸贴图交给 GPU 用屏幕空间导数逐像素求法线：
-    // 精度等于贴图分辨率，能刻画细刻线；而 512 的 CPU 法线图会把细线抹成缓坡。
-    material.bumpMap = heightTexture
-    // 负号：高度图里白=深，凹凸要往下凹才是「刻进去」。
-    // 0.72：细刻只有 3~5px 宽，远小于几何网格（420 格 / 2.6 单位 = 每格 6.2px），
-    // 位移根本表达不出来，全靠 bump 逐像素求法线。0.5 时细线几乎看不出深度
-    material.bumpScale = -0.55
+    // 注意：这里**不能**用 material.bumpMap 表达刻痕。
+    // 一旦挂了 normalMap，three 的 normal_fragment_maps 只会走 normalMap 那一支，
+    // USE_BUMPMAP 永远不成立，bumpScale 调到 -8 都没有任何像素变化。
+    // 刻痕的高度梯度改为在 onBeforeCompile 里自己采样 uHeightMap 求（见下）。
+    material.bumpMap = null
+    material.bumpScale = 0
     // 位移不再走 material.displacementMap —— 实测在这块几何上它完全没有生效，
     // 雕刻面始终是一张纯平面（包围盒 y 跨度只有场景倾斜的 0.13，没有位移量）。
     // 改在下面 onBeforeCompile 里直接注入顶点着色器，确定性地把顶点压下去。
@@ -1256,6 +1262,7 @@ function CarveSurface({
     material.emissiveIntensity = 0
 
     const deepColor = new THREE.Color(STONE_CARVE[stone])
+    const freshColor = new THREE.Color(STONE_FRESH[stone])
     const maskTexture = carveMaskTexture
     const guideTexture = guide?.texture ?? null
     const inkColor = new THREE.Color(GUIDE_INK[stone])
@@ -1263,9 +1270,14 @@ function CarveSurface({
     material.onBeforeCompile = (shader) => {
       shader.uniforms.uCarveMask = { value: maskTexture }
       shader.uniforms.uDeepColor = { value: deepColor }
+      shader.uniforms.uFreshColor = { value: freshColor }
+      shader.uniforms.uHeightMap = { value: heightTexture }
       shader.uniforms.uGuideMap = { value: guideTexture }
       shader.uniforms.uGuideInk = { value: inkColor }
       shader.uniforms.uGuideStrength = { value: guideOn }
+      if (import.meta.env.DEV) {
+        ;(material as unknown as Record<string, unknown>).__shader = shader
+      }
       // 必须自己传一份「原始 UV」。
       // three 的 vMapUv 会被 map 的 repeat/offset 变换过，而石纹贴图设了
       // repeat(2,2) —— 直接用它采样描稿图，只会显示左上四分之一，
@@ -1282,7 +1294,9 @@ void main() {`,
           'void main() {',
           `uniform sampler2D uCarveMask;
 uniform sampler2D uGuideMap;
+uniform sampler2D uHeightMap;
 uniform vec3 uDeepColor;
+uniform vec3 uFreshColor;
 uniform vec3 uGuideInk;
 uniform float uGuideStrength;
 varying vec2 vInkUv;
@@ -1290,32 +1304,74 @@ void main() {`,
         )
         .replace(
           '#include <map_fragment>',
-          `#include <map_fragment>
+`#include <map_fragment>
   vec4 carveSample = texture2D(uCarveMask, vInkUv);
-  float carveAmount = carveSample.r;
   float carveAO = carveSample.g;
-  float carveShade = carveSample.b;
-  // 凹处露出凿开后的新鲜石色（略深、略饱和，但仍是石头）
-  vec3 deepStone = uDeepColor * (0.8 + 0.45 * carveAO);
-  diffuseColor.rgb = mix(diffuseColor.rgb, deepStone, carveAmount * 0.96);
-  // AO + 方向性投影作用于整个石面（不只是刻痕）：
-  // 纹样浮雕、刻痕、池壁都会积影，这是「看着平」和「看着被凿开」的分界
-  float occlusion = max(carveAO, carveShade);
-  // occlusion 是「遮蔽程度」，越大必须越暗。
-  // 原来写成 mix(1.0, occlusion, 0.7)：occlusion=1 时结果是 1.0，
-  // 等于完全遮蔽反而全亮，把刻痕做成了发白的凸起，整块石头也平白暗了一半
-  diffuseColor.rgb *= 1.0 - occlusion * 0.8;
+  // 高度图 128 = 石面基准，越大越深。
+  float rawHeight = texture2D(uHeightMap, vInkUv).r;
+
+  // 一切都在 1024 高度图上算，不再依赖 512 遮罩 ——
+  // 一刀 1.5mm 的槽只有 5~6 个像素，落到 512 上剩 3px、再被双线性糊一次，
+  // 侧壁就没了；而侧壁正是「刻进去一条」和「抹了一片颜色」的全部区别。
+  // ±5 个纹素求差分。±1/±2 会把 8 位量化和落刀叠印的细微起伏放大成
+  // 一根根竖着的亮暗条纹 —— 槽底明明是一条平的，看上去像梳齿。
+  // 步子放到 5（≈1.3mm），低于这个尺度的起伏一律不算「坡」。
+  float texel = 5.0 / 1024.0;
+  float hL = texture2D(uHeightMap, vInkUv - vec2(texel, 0.0)).r;
+  float hR = texture2D(uHeightMap, vInkUv + vec2(texel, 0.0)).r;
+  float hD = texture2D(uHeightMap, vInkUv - vec2(0.0, texel)).r;
+  float hU = texture2D(uHeightMap, vInkUv + vec2(0.0, texel)).r;
+
+  // 刻痕量：只有比石面明显更深的才算。0.515 起坡、0.60 到顶，
+  // 细刀浅刻（0.58 左右）也能拿到大半，不会因为「刻得浅」就整条不见
+  float carveAmount = smoothstep(0.515, 0.60, rawHeight);
+  // 砚池这种大深坑（0.85 以上）不该算成一刀刻痕
+  float bowlArea = smoothstep(0.80, 0.92, rawHeight);
+
+  // 侧壁明暗：高度梯度 dot 光照方向。
+  // 差分就是这块面往哪边倾；朝左上（光源方向）的一侧受光，另一侧背光。
+  vec2 grad = vec2(hR - hL, hU - hD);
+  float slope = length(grad);
+  // 只用真正有坡度的地方。下界 0.018 是一道坎：低于它的都是量化噪声，
+  // 让它也参与明暗，槽底就会变成一格亮一格暗的梳齿；真正的槽壁梯度在 0.04 以上。
+  float wall = smoothstep(0.03, 0.08, slope);
+  // 场景主光在 [4,6,4]：+x、朝前（v 变小）、偏上。
+  // 换到 UV 空间就是「右上角打过来」，跟实际的明暗走向对上，亮边才不会出现在背光侧。
+  vec3 lightDir = normalize(vec3(0.72, -0.68, 0.5));
+  vec3 wallNormal = normalize(vec3(-grad.x, -grad.y, 0.028));
+  float facing = dot(wallNormal, lightDir);
+  float litWall = clamp(facing, 0.0, 1.0) * wall;
+  float darkWall = clamp(-facing, 0.0, 1.0) * wall;
+
+  // 刀口内部：新凿开的石口是灰白偏绿的麻面，比深绿的表层浅 ——
+  // 这才是阴刻线「看得见」的原因。之前混的是比表层更深的绿，
+  // 混完与背景几乎同色，量到 255 的刻痕在屏幕上却什么都没有。
+  // 槽里面是背光的暗部（阴刻的槽壁把光挡住了），砚池更深一档。
+  // 乘 0.55 是必须的：石纹贴图自身的明暗噪声就有 42~115 的起伏，
+  // 一条只比周围暗 20 的刻痕会被这点噪声整个吞掉 —— 这就是
+  // 「明明刻了却什么都看不见」。刻痕必须比噪声更深，才谈得上「看见」。
+  vec3 caveStone = uDeepColor * (1.0 - 0.35 * bowlArea) * 0.42;
+  diffuseColor.rgb = mix(diffuseColor.rgb, caveStone, carveAmount);
+
+  // 亮边压在迎光的那一侧槽壁上：一条暗线 + 一条贴着它的亮边，
+  // 这才是「凿进去一条」的视觉签名。宽阔的凿面则由 carveAmount 主导，
+  // 不会被亮边糊成一片白。
+  diffuseColor.rgb = mix(diffuseColor.rgb, uFreshColor * 1.25, litWall);
+  diffuseColor.rgb *= 1.0 - darkWall * 0.55;
+
+  // 接触阴影：只作用在真正凹下去的地方（AO），不再拿方向性投影去糊周边
+  diffuseColor.rgb *= 1.0 - carveAO * 0.6;
 
   // 朱砂/墨描稿：叠在石面之上。
   // 注意：这里**不能**乘 (1 - carveAmount)。carveAmount 是从整张高度图算的，
-  // 凡比石面深一点都算「刻痕」——预置的纹样浮雕（0.28 深）也被算进去，
+  // 凡比石面深一点都算「刻痕」——预置的纹样浮雕也被算进去，
   // 于是描稿在纹样区域被整片抹掉，只剩最浅的一小块能看见。
   // 刻过之后描稿消失，靠的是 paint() 里把 guide 画布对应位置涂黑。
   float inkRaw = texture2D(uGuideMap, vInkUv).r * uGuideStrength;
   // smoothstep 把 0.15~0.5 之间压成一段陡坡：线要么是实的，要么完全没有。
   // 线性映射会让整条线都是半透明，远看只剩一片脏
   float inkAmount = smoothstep(0.15, 0.5, inkRaw);
-  diffuseColor.rgb = mix(diffuseColor.rgb, uGuideInk, inkAmount);`,
+  diffuseColor.rgb = mix(diffuseColor.rgb, uGuideInk, inkAmount);`, 
         )
         .replace(
           '#include <roughnessmap_fragment>',
@@ -1471,7 +1527,7 @@ export function Carve3D({
     <Canvas
       dpr={[1, 2]}
       shadows
-      camera={{ position: [0, 2.15, 3.15], fov: 35 }}
+      camera={{ position: [0, 1.92, 2.5], fov: 35 }}
       gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true, toneMappingExposure: 1.02 }}
       onCreated={(state) => {
         onCaptureReady?.(() => state.gl.domElement.toDataURL('image/png'))
@@ -1529,12 +1585,18 @@ export function Carve3D({
         far={4}
         color="#07110e"
       />
+      {/* 永远是 enabled，只把「旋转」这一项交给模式开关：
+          原来 enabled={orbit} 会让雕刻模式下整个控制器停摆，滚轮缩放也一起没了 ——
+          想要看清一条 1.5mm 的刀痕，只能先切到「旋转」去缩放，再切回来。
+          现在雕刻模式下滚轮照样能推近，转视角仍然要切到「旋转」。 */}
       <OrbitControls
-        enabled={orbit}
         makeDefault
+        enableRotate={orbit}
         enablePan={false}
-        minDistance={2.2}
-        maxDistance={7}
+        enableZoom
+        zoomSpeed={0.9}
+        minDistance={1.1}
+        maxDistance={8}
         minPolarAngle={0.35}
         maxPolarAngle={Math.PI / 2.2}
         target={[0, 0, 0]}
